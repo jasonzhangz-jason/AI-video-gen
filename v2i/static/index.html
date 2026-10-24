@@ -34,6 +34,14 @@
           <button type="button" class="seg" data-src="file">本地文件</button>
         </div>
 
+        <div class="platform-row">
+          <label class="inline-label">平台
+            <select id="platform"><option value="auto">自动识别</option></select>
+          </label>
+          <button id="probeBtn" class="ghost probe-btn" type="button">先探测</button>
+          <span class="probe-out" id="probeOut"></span>
+        </div>
+
         <div class="url-row" id="urlRow">
           <input id="url" type="text" autocomplete="off" spellcheck="false"
                  placeholder="粘贴公开视频链接：B 站 / YouTube / 播客页…" />
@@ -89,6 +97,17 @@
                 <option value="light" selected>轻度整理 · 分段润色（推荐）</option>
                 <option value="script">口播稿 · 改写成能念的稿子</option>
               </select>
+            </label>
+            <label>浏览器 Cookies
+              <select id="cookiesFrom">
+                <option value="">不使用（cookies.txt 走 .env）</option>
+                <option value="chrome">Chrome</option>
+                <option value="edge">Edge</option>
+                <option value="firefox">Firefox</option>
+              </select>
+            </label>
+            <label>代理（可选）
+              <input id="proxy" type="text" placeholder="http://127.0.0.1:7890" />
             </label>
             <label>LLM 模型（可选）
               <input id="model" type="text" placeholder="留空用 .env 里的配置" />

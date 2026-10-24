@@ -442,6 +442,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self._status())
             if route == "/api/runs":
                 return self._json(self._runs())
+            if route == "/api/platforms":
+                from . import platforms as platforms_mod
+                url = (query.get("url") or [""])[0]
+                found = platforms_mod.match(url) if url else None
+                return self._json({
+                    "platforms": platforms_mod.PLATFORMS,
+                    "detected": found["id"] if found else None,
+                })
+            if route == "/api/probe":
+                return self._json(self._probe(query))
             if route == "/api/job":
                 job = _jobs.get((query.get("id") or [""])[0])
                 if job:
@@ -566,7 +576,40 @@ class Handler(BaseHTTPRequestHandler):
             model=body.get("model") or None,
             prefer_subs=bool(prefer) if prefer is not None else None,
             copy_style=body.get("copy_style") or None,
+            cookies_from_browser=body.get("cookies_from_browser") or None,
+            proxy=body.get("proxy") or None,
         )
+
+    def _probe(self, query: dict) -> dict:
+        from . import fetch as fetch_mod
+        from . import platforms as platforms_mod
+
+        url = (query.get("url") or [""])[0].strip()
+        if not url:
+            return {"ok": False, "error": "缺少 url"}
+        platform_id = (query.get("platform") or ["auto"])[0]
+        ok, hint = platforms_mod.check(platform_id, url)
+        cfg = Config.from_env(
+            cookies_from_browser=(query.get("cookies_from_browser") or [""])[0] or None,
+            proxy=(query.get("proxy") or [""])[0] or None,
+        )
+        try:
+            info = fetch_mod.probe(url, cfg, fast=True)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc), "hint": hint, "platform": platform_id}
+        meta = fetch_mod._clean_meta(info)
+        subs = sorted(set(info.get("subtitles") or {}) | set(info.get("automatic_captions") or {}))
+        return {
+            "ok": True,
+            "hint": hint,
+            "platform": platform_id,
+            "title": meta.get("title"),
+            "uploader": meta.get("uploader") or "",
+            "duration": meta.get("duration_text"),
+            "extractor": info.get("extractor_key") or info.get("extractor") or "",
+            "subtitles": subs[:8],
+            "formats": len(info.get("formats") or []),
+        }
 
     def _new_job(self, body: dict, kind: str, url: str = "",
                  file_path: Path | None = None, file_name: str = "") -> dict:
@@ -650,6 +693,8 @@ class Handler(BaseHTTPRequestHandler):
             "force": (query.get("force") or ["0"])[0] in ("1", "true", "yes"),
             "prefer_subs": (query.get("prefer_subs") or ["1"])[0] not in ("0", "false"),
             "copy_style": (query.get("copy_style") or [""])[0],
+            "cookies_from_browser": (query.get("cookies_from_browser") or [""])[0],
+            "proxy": (query.get("proxy") or [""])[0],
         }
         result = self._new_job(body, "local", file_path=target, file_name=name)
         result["file"] = name

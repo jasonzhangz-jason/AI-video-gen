@@ -1,4 +1,4 @@
-"""下载层（fetch）：字幕优先，音频兜底。
+﻿"""下载层（fetch）：字幕优先，音频兜底。
 
 设计要点：
 - 先用 extract_info(download=False) 探测字幕，有字幕就只下字幕，省掉下载与转写；
@@ -36,15 +36,15 @@ def _log(msg: str) -> None:
     print(msg, flush=True)
 
 
-def _base_opts(cfg: Config) -> dict:
+def _base_opts(cfg: Config, fast: bool = False) -> dict:
     opts = {
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
         "noplaylist": True,
-        "retries": 5,
-        "fragment_retries": 5,
-        "socket_timeout": 30,
+        "retries": 1 if fast else 5,
+        "fragment_retries": 1 if fast else 5,
+        "socket_timeout": 15 if fast else 30,
         "ignoreerrors": False,
         "no_color": True,
     }
@@ -52,6 +52,9 @@ def _base_opts(cfg: Config) -> dict:
         opts["ffmpeg_location"] = cfg.ffmpeg_exe
     if cfg.cookies and Path(cfg.cookies).exists():
         opts["cookiefile"] = str(cfg.cookies)
+    elif getattr(cfg, "cookies_from_browser", None):
+        # 直接复用浏览器登录态：抖音/小红书/X 这类站点几乎必须
+        opts["cookiesfrombrowser"] = (str(cfg.cookies_from_browser),)
     if cfg.proxy:
         opts["proxy"] = cfg.proxy
     if cfg.max_height:
@@ -96,15 +99,15 @@ def _pick_subtitle(info: dict) -> tuple[str, str, str] | None:
     return None
 
 
-def probe(url: str, cfg: Config) -> dict:
+def probe(url: str, cfg: Config, fast: bool = False) -> dict:
     import yt_dlp
 
-    opts = _base_opts(cfg)
+    opts = _base_opts(cfg, fast=fast)
     with yt_dlp.YoutubeDL(opts) as ydl:
         try:
             info = ydl.extract_info(url, download=False)
         except Exception as exc:  # noqa: BLE001
-            raise FetchError(f"解析失败：{exc}") from exc
+            raise FetchError(f"解析失败：{friendly_error(exc)}") from exc
     if info is None:
         raise FetchError("解析失败：站点返回空结果（可能需要 cookies 或该内容不可公开访问）")
     if info.get("_type") == "playlist":
@@ -336,3 +339,26 @@ def fetch(url: str, cfg: Config, workdir: Path, force: bool = False, info: dict 
     source = {"kind": "audio", "audio": str(audio), "subtitle": None, "lang": None}
     write_json(workdir / "source.json", source)
     return {"meta": meta, "source": source, "segments": [], "cached": False}
+
+
+def friendly_error(message: str) -> str:
+    """把 yt-dlp 的英文报错翻译成"下一步该干什么"。"""
+    text = str(message or "")
+    low = text.lower()
+    if "could not copy chrome cookie database" in low:
+        return "Chrome 正在运行，cookie 库被占用：先关掉 Chrome 再试，或导出 cookies.txt 设 V2I_COOKIES。"
+    if "failed to decrypt with dpapi" in low:
+        return "新版 Chrome/Edge 的 cookie 有 App-Bound 加密，yt-dlp 解不开：请用浏览器扩展导出 cookies.txt，或改用 Firefox。"
+    if "sign in to confirm you" in low or "not a bot" in low:
+        return "YouTube 触发了机器人校验：需要 cookies.txt（导出后设 V2I_COOKIES），或挂代理换 IP。"
+    if "fresh cookies" in low:
+        return "该站点要求新鲜 cookies：导出 cookies.txt 后设 V2I_COOKIES（抖音/快手/小红书基本都需要）。"
+    if "unsupported url" in low:
+        return "这个链接形式不被支持：抖音请用 /video/<id>（不是 /shipin/），小红书请用 xhslink 短链或笔记页。"
+    if "private" in low or "login" in low or "sign in" in low:
+        return "内容需要登录：导出 cookies.txt 后设 V2I_COOKIES。"
+    if "http error 403" in low:
+        return "403：可能需要 cookies 或代理；B 站高清晰度也要登录。"
+    if "timed out" in low or "timeout" in low:
+        return "网络超时：国内访问 YouTube / X / TikTok 需要代理（V2I_PROXY）。"
+    return text

@@ -47,6 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--asr-model", help="tiny | base | small | medium | large-v3 | turbo")
     run.add_argument("--no-subs", action="store_true", help="忽略原生字幕，强制下载音频转写")
     run.add_argument("--copy-style", choices=["raw", "light", "script"], help="文案风格：raw 原样 / light 轻度整理 / script 口播稿")
+    run.add_argument("--cookies-from-browser", help="复用浏览器 cookies：chrome / edge / firefox")
+    run.add_argument("--platform", help="指定平台 id（如 douyin / youtube / x）")
     common(run)
 
     fetch = sub.add_parser("fetch", help="只做下载（字幕优先，无字幕则下音频）")
@@ -78,6 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--copy-style", choices=["raw", "light", "script"])
     common(batch)
 
+    pr = sub.add_parser("probe", help="只探测链接（标题/时长/字幕/平台），不下载")
+    pr.add_argument("url")
+    pr.add_argument("--platform", help="指定平台 id（见 v2i platforms）")
+    pr.add_argument("--cookies-from-browser", help="复用浏览器 cookies：chrome / edge / firefox")
+    common(pr)
+
     doc = sub.add_parser("doctor", help="环境自检")
     doc.add_argument("--ping", action="store_true", help="顺带调一次 LLM，验证 key 与网络")
 
@@ -90,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _config(args) -> Config:
     overrides = {}
-    for field in ("model", "provider", "language", "asr_model", "copy_style"):
+    for field in ("model", "provider", "language", "asr_model", "copy_style", "cookies_from_browser"):
         value = getattr(args, field, None)
         if value:
             overrides[field] = value
@@ -305,6 +313,28 @@ def _cmd_batch(args) -> int:
     return 0 if not failed else 1
 
 
+def _cmd_probe(args) -> int:
+    from . import platforms as platforms_mod
+
+    cfg = _config(args)
+    ok, hint = platforms_mod.check(getattr(args, "platform", None), args.url)
+    _out(f"  平台：{hint}")
+    try:
+        info = fetch_mod.probe(args.url, cfg, fast=True)
+    except fetch_mod.FetchError as exc:
+        _err(f"  ✗ 探测失败：{exc}")
+        return 3
+    meta = fetch_mod._clean_meta(info)
+    subs = sorted(set(info.get("subtitles") or {}) | set(info.get("automatic_captions") or {}))
+    _out(f"  标题：{meta.get('title')}")
+    _out(f"  作者：{meta.get('uploader') or '未知'}")
+    _out(f"  时长：{meta.get('duration_text')}")
+    _out(f"  解析器：{info.get('extractor_key') or info.get('extractor')}")
+    _out(f"  字幕：{', '.join(subs[:6]) if subs else '无（将走音频转写）'}")
+    _out(f"  可用格式：{len(info.get('formats') or [])} 个")
+    return 0
+
+
 def _cmd_doctor(args) -> int:
     cfg = _config(args)
     _out(f"v2i {__version__} ｜ {PROJECT_ROOT}")
@@ -413,6 +443,7 @@ def main(argv: list[str] | None = None) -> int:
         "transcribe": _cmd_transcribe,
         "distill": _cmd_distill,
         "render": _cmd_render,
+        "probe": _cmd_probe,
         "batch": _cmd_batch,
         "doctor": _cmd_doctor,
         "web": _cmd_web,

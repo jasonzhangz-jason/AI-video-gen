@@ -83,6 +83,7 @@ class Config:
 
     # 下载
     cookies: Path | None = None
+    cookies_from_browser: str | None = None   # chrome | edge | firefox | brave …
     proxy: str | None = None
     ffmpeg: str | None = None
     prefer_subs: bool = True
@@ -171,6 +172,7 @@ class Config:
             chunk_chars=int(_env("V2I_CHUNK_CHARS", "1600")),
             copy_style=_env("V2I_COPY_STYLE", "light"),
             cookies=Path(_env("V2I_COOKIES")) if _env("V2I_COOKIES") else None,
+            cookies_from_browser=_env("V2I_COOKIES_FROM_BROWSER", None),
             proxy=_env("V2I_PROXY", None),
         )
         for key, value in overrides.items():

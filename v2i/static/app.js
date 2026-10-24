@@ -3,7 +3,7 @@
   "use strict";
 
   const $ = (sel) => document.querySelector(sel);
-  const state = { status: null, jobId: null, running: false, run: null, file: null, src: "url" };
+  const state = { status: null, jobId: null, running: false, run: null, file: null, src: "url", platforms: [] };
 
   const FILE_LABELS = {
     "out/summary.md": "摘要卡",
@@ -531,6 +531,9 @@
       language: $("#language").value || undefined,
       model: $("#model").value.trim() || undefined,
       copy_style: $("#copyStyle") ? $("#copyStyle").value : undefined,
+      platform: $("#platform") ? $("#platform").value : undefined,
+      cookies_from_browser: $("#cookiesFrom") && $("#cookiesFrom").value ? $("#cookiesFrom").value : undefined,
+      proxy: $("#proxy") && $("#proxy").value.trim() ? $("#proxy").value.trim() : undefined,
       prefer_subs: $("#preferSubs").checked,
       force: $("#force").checked,
     };
@@ -552,6 +555,8 @@
         if (options.language) params.set("language", options.language);
         if (options.model) params.set("model", options.model);
         if (options.copy_style) params.set("copy_style", options.copy_style);
+        if (options.cookies_from_browser) params.set("cookies_from_browser", options.cookies_from_browser);
+        if (options.proxy) params.set("proxy", options.proxy);
         params.set("prefer_subs", options.prefer_subs ? "1" : "0");
         params.set("force", options.force ? "1" : "0");
 
@@ -580,6 +585,68 @@
   }
 
   // ---------------------------------------------------------------- 素材来源
+
+  function platformNote(p) {
+    if (!p || p.id === "auto") return "按链接域名自动匹配平台";
+    const needs = (p.needs || []).map((n) => (n === "cookies" ? "需 cookies" : n === "proxy" ? "需代理" : n));
+    return `${p.note}${needs.length ? `（${needs.join(" · ")}）` : ""}`;
+  }
+
+  function detectPlatform(url) {
+    let host = "";
+    try { host = new URL(url).hostname.toLowerCase(); } catch (e) { return null; }
+    return state.platforms.find((p) => p.id !== "auto" && (p.hosts || []).some((h) => host === h || host.endsWith("." + h))) || null;
+  }
+
+  function renderPlatformNote() {
+    const id = $("#platform").value;
+    const p = state.platforms.find((x) => x.id === id);
+    const out = $("#probeOut");
+    if (!out) return;
+    out.className = "probe-out";
+    out.textContent = platformNote(p);
+  }
+
+  async function loadPlatforms() {
+    try {
+      const data = await api("/api/platforms");
+      state.platforms = data.platforms || [];
+      const select = $("#platform");
+      select.innerHTML = state.platforms
+        .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`)
+        .join("");
+      select.value = "auto";
+      renderPlatformNote();
+    } catch (err) {
+      console.warn("平台列表加载失败", err);
+    }
+  }
+
+  async function probeUrl() {
+    const url = $("#url").value.trim();
+    const out = $("#probeOut");
+    if (!url) { out.className = "probe-out err"; out.textContent = "先贴一个链接"; return; }
+    out.className = "probe-out";
+    out.textContent = "探测中…";
+    const params = new URLSearchParams({ url });
+    params.set("platform", $("#platform").value || "auto");
+    if ($("#cookiesFrom") && $("#cookiesFrom").value) params.set("cookies_from_browser", $("#cookiesFrom").value);
+    if ($("#proxy") && $("#proxy").value.trim()) params.set("proxy", $("#proxy").value.trim());
+    try {
+      const r = await api(`/api/probe?${params.toString()}`);
+      if (r.ok) {
+        const subs = (r.subtitles || []).length ? `字幕 ${r.subtitles.slice(0, 3).join(" / ")}` : "无字幕 → 走转写";
+        out.className = "probe-out ok";
+        out.textContent = `✓ ${r.title} · ${r.duration} · ${subs} · ${r.formats} 个格式`;
+      } else {
+        out.className = "probe-out err";
+        out.textContent = `✗ ${r.error}`;
+      }
+    } catch (err) {
+      out.className = "probe-out err";
+      out.textContent = `✗ ${err.message}`;
+    }
+  }
 
   function setSource(src) {
     state.src = src;
@@ -624,6 +691,17 @@
     if (e.target.id !== "fileInput") $("#fileInput").click();
   });
   $("#fileInput").addEventListener("change", (e) => selectFile(e.target.files[0]));
+  $("#probeBtn").addEventListener("click", probeUrl);
+  $("#platform").addEventListener("change", renderPlatformNote);
+  $("#url").addEventListener("input", () => {
+    if ($("#platform").value !== "auto") return;
+    const found = detectPlatform($("#url").value.trim());
+    if (found) {
+      const out = $("#probeOut");
+      out.className = "probe-out";
+      out.textContent = `识别为 ${found.label}：${platformNote(found)}`;
+    }
+  });
 
   ["dragenter", "dragover"].forEach((name) => {
     document.addEventListener(name, (e) => {
@@ -656,6 +734,7 @@
     }
   });
   loadRuns();
+  loadPlatforms();
 
   // #run=<目录名> 直达某次结果
   const m = /^#run=(.+)$/.exec(location.hash || "");
