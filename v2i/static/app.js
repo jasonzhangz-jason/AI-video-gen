@@ -264,6 +264,11 @@
       if (s.tokens) bits.push(`${s.tokens} tokens`);
       if ((s.skipped || []).length) bits.push(`未提炼：${s.skipped.join(" / ")}`);
       $("#resultMeta").textContent = bits.join(" · ");
+      const vbtn = $("#fetchVideoBtn");
+      if (vbtn) {
+        vbtn.hidden = !(s.url && !s.has_video);
+        vbtn.dataset.dir = dir;
+      }
 
       const files = detail.files || [];
       const tabs = $("#tabs");
@@ -390,6 +395,37 @@
       }
     } catch (err) {
       body.innerHTML = `<p class="empty">预览失败：${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  async function fetchVideoFor(dir) {
+    const btn = $("#fetchVideoBtn");
+    if (btn) { btn.disabled = true; btn.textContent = "下载中…"; }
+    try {
+      const r = await api("/api/fetch_video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dir }),
+      });
+      if (r.error) throw new Error(r.error);
+      await new Promise((resolve, reject) => {
+        const tick = async () => {
+          try {
+            const job = await api(`/api/job?id=${encodeURIComponent(r.job_id)}`);
+            if (job.status === "done") return resolve();
+            if (job.status === "error") return reject(new Error(job.error || "下载失败"));
+            setTimeout(tick, 900);
+          } catch (err) {
+            reject(err);
+          }
+        };
+        tick();
+      });
+      await openRun(dir);
+      loadRuns();
+    } catch (err) {
+      alert("补下视频失败：" + err.message);
+      if (btn) { btn.disabled = false; btn.textContent = "补下原视频"; }
     }
   }
 
@@ -547,6 +583,7 @@
       cookies_from_browser: $("#cookiesFrom") && $("#cookiesFrom").value ? $("#cookiesFrom").value : undefined,
       proxy: $("#proxy") && $("#proxy").value.trim() ? $("#proxy").value.trim() : undefined,
       prefer_subs: $("#preferSubs").checked,
+      keep_video: $("#keepVideo") ? $("#keepVideo").checked : false,
       force: $("#force").checked,
     };
 
@@ -570,6 +607,7 @@
         if (options.cookies_from_browser) params.set("cookies_from_browser", options.cookies_from_browser);
         if (options.proxy) params.set("proxy", options.proxy);
         params.set("prefer_subs", options.prefer_subs ? "1" : "0");
+        params.set("keep_video", options.keep_video ? "1" : "0");
         params.set("force", options.force ? "1" : "0");
 
         const bar = $("#bar");
@@ -759,14 +797,20 @@
   // ---------------------------------------------------------------- 页面切换 / 文案改写
 
   function switchPage(name) {
-    const page = ["new", "rewrite", "settings"].includes(name) ? name : "new";
+    const page = ["new", "history", "rewrite", "settings"].includes(name) ? name : "new";
     document.querySelectorAll(".nav-item").forEach((b) => {
       b.classList.toggle("active", b.dataset.page === page);
     });
-    [["new", "#page-new"], ["rewrite", "#page-rewrite"], ["settings", "#page-settings"]].forEach(([key, sel]) => {
+    [["new", "#page-new"], ["history", "#page-history"], ["rewrite", "#page-rewrite"], ["settings", "#page-settings"]].forEach(([key, sel]) => {
       const el = $(sel);
       if (el) el.hidden = key !== page;
     });
+    if (page === "history") {
+      mountResultCard($("#histDetailSlot"));
+      renderHistoryPage();
+    } else {
+      unmountResultCard();
+    }
     if (page === "new") {
       if ((location.hash || "").startsWith("#page=")) history.replaceState(null, "", "#page=new");
     } else {
@@ -1068,6 +1112,80 @@
 
   const STYLE_LABEL = { raw: "原样", light: "轻度整理", script: "口播稿" };
 
+  function mountResultCard(host) {
+    const card = $("#resultCard");
+    if (!card || !host) return;
+    if (!state.cardHome) {
+      state.cardHome = { parent: card.parentElement, next: card.nextElementSibling };
+    }
+    if (card.parentElement !== host) host.appendChild(card);
+  }
+
+  function unmountResultCard() {
+    const card = $("#resultCard");
+    if (!card || !state.cardHome) return;
+    const { parent, next } = state.cardHome;
+    if (!parent || card.parentElement === parent) return;
+    const anchor = next && next.parentElement === parent ? next : null;
+    parent.insertBefore(card, anchor);
+  }
+
+  async function renderHistoryPage() {
+    const box = $("#histList");
+    if (!box) return;
+    if (!state.runs) {
+      box.innerHTML = '<li class="hist-empty">读取中…</li>';
+      await loadRuns();
+    }
+    const runs = state.runs || [];
+    const q = ($("#histSearch").value || "").trim().toLowerCase();
+    const videoOnly = $("#histVideoOnly").checked;
+    const shown = runs.filter((r) => {
+      if (videoOnly && !r.has_video) return false;
+      if (!q) return true;
+      return `${r.title || ""} ${r.uploader || ""}`.toLowerCase().includes(q);
+    });
+    $("#histCount").textContent = runs.length
+      ? `共 ${runs.length} 条${shown.length !== runs.length ? `，命中 ${shown.length} 条` : ""}`
+      : "还没有任务";
+    if (!shown.length) {
+      box.innerHTML = `<li class="hist-empty">${runs.length ? "没有匹配的任务" : "跑完第一个任务后，这里会按时间倒序列出全部记录。"}</li>`;
+      return;
+    }
+    box.innerHTML = shown.map((r) => {
+      const bits = [];
+      if (r.duration) bits.push(r.duration);
+      if (r.source) bits.push(r.source === "subtitle" ? "字幕" : r.source === "video" ? "视频转写" : "音频转写");
+      bits.push(`${(r.outputs || []).length} 份产物`);
+      if (r.elapsed) bits.push(fmtElapsed(r.elapsed));
+      if (r.tokens) bits.push(`${r.tokens} tokens`);
+      return `
+        <li class="hist-row${r.dir === (state.run || {}).dir ? " active" : ""}" data-dir="${escapeHtml(r.dir)}">
+          <div class="hist-main">
+            <strong>${escapeHtml(r.title || r.dir)}</strong>
+            <small>${escapeHtml(bits.join(" · "))}${r.created ? " · " + escapeHtml(r.created) : ""}</small>
+          </div>
+          <div class="hist-badges">
+            ${r.has_video ? '<span class="badge video">VIDEO</span>' : ""}
+            ${(r.skipped || []).length ? '<span class="badge warn">部分跳过</span>' : ""}
+            <span class="hist-go">查看 ›</span>
+          </div>
+        </li>`;
+    }).join("");
+    box.querySelectorAll(".hist-row").forEach((row) => {
+      row.addEventListener("click", () => openHistoryRun(row.dataset.dir));
+    });
+  }
+
+  async function openHistoryRun(dir) {
+    document.querySelectorAll("#histList .hist-row").forEach((r) => {
+      r.classList.toggle("active", r.dataset.dir === dir);
+    });
+    await openRun(dir);
+    const card = $("#resultCard");
+    if (card && !card.hidden) card.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   async function loadRewriteHistory() {
     const box = $("#rwHistory");
     if (!box) return;
@@ -1255,6 +1373,15 @@
   $("#rwCopy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(state.lastRewrite || ""); $("#rwHint").textContent = "已复制"; }
     catch (e) { $("#rwHint").textContent = "复制失败"; }
+  });
+  ["histSearch", "histVideoOnly"].forEach((id) => {
+    const el = $("#" + id);
+    if (el) el.addEventListener("input", renderHistoryPage);
+  });
+  $("#histRefresh").addEventListener("click", async () => { await loadRuns(); renderHistoryPage(); });
+  $("#fetchVideoBtn").addEventListener("click", () => {
+    const dir = $("#fetchVideoBtn").dataset.dir;
+    if (dir) fetchVideoFor(dir);
   });
   $("#probeBtn").addEventListener("click", probeUrl);
   $("#cookiePick").addEventListener("click", () => $("#cookieFile").click());

@@ -241,6 +241,34 @@ def _run_local(path: Path, cfg: Config, modes: tuple[str, ...], force: bool) -> 
     return workdir
 
 
+def _fetch_video_job(job: dict) -> Path:
+    """给已有任务补下原视频（不动逐字稿）。"""
+    from . import fetch as fetch_mod
+
+    workdir = Path(job["_dir"])
+    meta = read_json(workdir / "meta.json", {}) or {}
+    url = meta.get("webpage_url") or job.get("url") or ""
+    if not url:
+        raise RuntimeError("这条记录没有原始链接（本地文件），没法补下视频")
+    cfg = job["_cfg"]
+    cfg.keep_video = True
+    cfg.force = True
+    print(f"  补下原视频：{url.split('?')[0]}", flush=True)
+    media, is_video = fetch_mod.download_media(url, cfg, workdir)
+    source = read_json(workdir / "source.json", {}) or {}
+    source.update({
+        "kind": "video" if is_video else "audio",
+        "media": str(media),
+        "audio": str(media),
+    })
+    write_json(workdir / "source.json", source)
+    if is_video:
+        print(f"  视频已就绪：{media.name}（{media.stat().st_size / 1e6:.1f} MB）", flush=True)
+    else:
+        print("  ! 这个站点只拿到了音频格式", flush=True)
+    return workdir
+
+
 def _run_job(job: dict) -> None:
     from .cli import _run_one
 
@@ -250,7 +278,9 @@ def _run_job(job: dict) -> None:
     try:
         with redirect_stdout(_LogWriter(job)):
             cfg = job["_cfg"]
-            if job.get("kind") == "local":
+            if job.get("kind") == "video":
+                workdir = _fetch_video_job(job)
+            elif job.get("kind") == "local":
                 workdir = _run_local(Path(job["_file_path"]), cfg, job["modes"], job["force"])
             else:
                 workdir = _run_one(job["url"], cfg, cfg.runs_dir, job["modes"], job["force"])
@@ -330,6 +360,17 @@ def _runs_dir(cfg: Config) -> Path:
     return cfg.runs_dir
 
 
+VIDEO_SUFFIXES = {".mp4", ".webm", ".mkv", ".mov", ".m4v"}
+
+
+def _has_video(run_dir: Path) -> bool:
+    source = read_json(run_dir / "source.json", {}) or {}
+    media = source.get("media") or source.get("audio") or ""
+    if media and Path(media).suffix.lower() in VIDEO_SUFFIXES and Path(media).exists():
+        return True
+    return any(p.suffix.lower() in VIDEO_SUFFIXES for p in run_dir.glob("source.*"))
+
+
 def _run_summary(path: Path, cfg: Config) -> dict:
     meta = read_json(path / "meta.json", {}) or {}
     manifest = read_json(path / "manifest.json", {}) or {}
@@ -351,6 +392,7 @@ def _run_summary(path: Path, cfg: Config) -> dict:
         "mtime_text": time.strftime("%m-%d %H:%M", time.localtime(path.stat().st_mtime)),
         "invalid": (manifest.get("distill") or {}).get("invalid_citations") or {},
         "skipped": (manifest.get("distill") or {}).get("skipped") or [],
+        "has_video": _has_video(path),
     }
 
 
@@ -613,6 +655,8 @@ class Handler(BaseHTTPRequestHandler):
 
                 removed = history_mod.clear()
                 return self._json({"ok": True, "removed": removed, "items": []})
+            if parsed.path == "/api/fetch_video":
+                return self._json(self._start_video(body))
             if parsed.path == "/api/settings":
                 return self._save_settings(body)
             if parsed.path == "/api/settings/test":
@@ -680,6 +724,7 @@ class Handler(BaseHTTPRequestHandler):
             model=body.get("model") or None,
             prefer_subs=bool(prefer) if prefer is not None else None,
             copy_style=body.get("copy_style") or None,
+            keep_video=bool(body.get("keep_video")) or None,
             cookies_from_browser=body.get("cookies_from_browser") or None,
             proxy=body.get("proxy") or None,
         )
@@ -717,7 +762,8 @@ class Handler(BaseHTTPRequestHandler):
         }
 
     def _new_job(self, body: dict, kind: str, url: str = "",
-                 file_path: Path | None = None, file_name: str = "") -> dict:
+                 file_path: Path | None = None, file_name: str = "",
+                 dir_name: str = "") -> dict:
         modes_raw = body.get("modes") or ["all"]
         if isinstance(modes_raw, str):
             modes_raw = [m.strip() for m in modes_raw.split(",") if m.strip()]
@@ -733,6 +779,7 @@ class Handler(BaseHTTPRequestHandler):
             "modes": list(modes),
             "_cfg": self._cfg_from(body),
             "_file_path": str(file_path or ""),
+            "_dir": dir_name,
             "force": bool(body.get("force")),
             "status": "queued",
             "stage": "排队中",
@@ -828,6 +875,22 @@ class Handler(BaseHTTPRequestHandler):
                 "b_chars": len(b),
             },
         }
+
+    def _start_video(self, body: dict) -> dict:
+        name = str(body.get("dir") or "")
+        run_dir = _safe_run_dir(name, self.cfg)
+        if not run_dir:
+            return {"error": "找不到这条任务"}
+        meta = read_json(run_dir / "meta.json", {}) or {}
+        url = meta.get("webpage_url") or ""
+        if not url:
+            return {"error": "这条是本地文件任务，没有原始链接，补不了视频"}
+        source = read_json(run_dir / "source.json", {}) or {}
+        media = source.get("media") or source.get("audio") or ""
+        if media and Path(media).suffix.lower() in {".mp4", ".webm", ".mkv", ".mov", ".m4v"}:
+            return {"error": "这条任务已经有视频文件了"}
+        return self._new_job({"keep_video": True, "force": True}, "video",
+                             url=url, dir_name=str(run_dir))
 
     def _settings_view(self) -> dict:
         from .settings import SETTINGS_PATH, load, mask
@@ -981,6 +1044,7 @@ class Handler(BaseHTTPRequestHandler):
             "copy_style": (query.get("copy_style") or [""])[0],
             "cookies_from_browser": (query.get("cookies_from_browser") or [""])[0],
             "proxy": (query.get("proxy") or [""])[0],
+            "keep_video": (query.get("keep_video") or ["0"])[0] in ("1", "true", "yes"),
         }
         result = self._new_job(body, "local", file_path=target, file_name=name)
         result["file"] = name

@@ -781,3 +781,67 @@ button.mini:hover { background: #ffedd5; }
   .rw-hist { grid-template-columns: 1fr; }
   .rw-preview { white-space: normal; }
 }
+#fetchVideoBtn { margin-left: 10px; border: 1px solid var(--line); background: #fbfcfe; padding: 4px 10px; font-size: 12px; }
+#fetchVideoBtn:hover { border-color: #c3cdfa; background: #f7f9ff; }
+#fetchVideoBtn[disabled] { opacity: .6; cursor: wait; }
+
+/* ---------- 选项 pill（保留视频 / 忽略缓存） ---------- */
+.modes-sep {
+  width: 1px;
+  margin: 2px 4px;
+  align-self: stretch;
+  background: var(--line);
+}
+.modes label.opt {
+  border-style: dashed;
+  color: var(--muted);
+}
+.modes label.opt:has(input:checked) {
+  color: var(--ink);
+  border-style: solid;
+  border-color: #c3cdfa;
+  background: #f7f9ff;
+}
+
+/* ---------- 历史任务页 ---------- */
+.hist-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.hist-tools input[type="search"] {
+  flex: 1;
+  min-width: 200px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+  font-size: 13px;
+  outline: none;
+}
+.hist-tools input[type="search"]:focus { border-color: #b7c4f8; box-shadow: 0 0 0 3px rgba(59, 98, 246, .12); }
+.hist-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.hist-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+}
+.hist-row:hover { border-color: #c3cdfa; background: #f7f9ff; }
+.hist-row.active { border-color: #b7c4f8; background: #eef2ff; }
+.hist-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.hist-main strong { font-size: 14px; font-weight: 600; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-main small { font-size: 11.5px; color: var(--muted); }
+.hist-badges { display: flex; align-items: center; gap: 8px; flex: none; }
+.badge {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  letter-spacing: .04em;
+  font-weight: 600;
+}
+.badge.video { background: #eef2ff; color: #2c46b8; }
+.badge.warn { background: #fff6e5; color: #8a5a00; }
+.hist-go { font-size: 12px; color: var(--brand); }
+.hist-empty { padding: 18px 6px; font-size: 13px; color: var(--muted); }

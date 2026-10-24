@@ -92,6 +92,7 @@ class Config:
     word_timestamps: bool = False
 
     # 下载
+    keep_video: bool = False          # 下载原视频（可在界面里播放），否则只下音频
     cookies: Path | None = None
     cookies_from_browser: str | None = None   # chrome | edge | firefox | brave …
     proxy: str | None = None
@@ -185,6 +186,7 @@ class Config:
             chunk_chars=int(_env("V2I_CHUNK_CHARS", "1600")),
             copy_style=_env("V2I_COPY_STYLE", "light"),
             cookies=Path(_env("V2I_COOKIES")) if _env("V2I_COOKIES") else default_cookies(),
+            keep_video=_env("V2I_KEEP_VIDEO", "").lower() in ("1", "true", "yes", "on"),
             cookies_from_browser=_env("V2I_COOKIES_FROM_BROWSER", None),
             proxy=_env("V2I_PROXY", None),
         )

@@ -48,12 +48,14 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--no-subs", action="store_true", help="忽略原生字幕，强制下载音频转写")
     run.add_argument("--copy-style", choices=["raw", "light", "script"], help="文案风格：raw 原样 / light 轻度整理 / script 口播稿")
     run.add_argument("--cookies-from-browser", help="复用浏览器 cookies：chrome / edge / firefox")
+    run.add_argument("--keep-video", action="store_true", help="下载原视频（界面里可播放），否则只下音频")
     run.add_argument("--platform", help="指定平台 id（如 douyin / youtube / x）")
     common(run)
 
-    fetch = sub.add_parser("fetch", help="只做下载（字幕优先，无字幕则下音频）")
+    fetch = sub.add_parser("fetch", help="只做下载（字幕优先，无字幕则下音频/视频）")
     fetch.add_argument("url")
     fetch.add_argument("--no-subs", action="store_true", help="忽略原生字幕")
+    fetch.add_argument("--keep-video", action="store_true", help="下载原视频（界面里可播放）")
     common(fetch)
 
     trans = sub.add_parser("transcribe", help="只做转写（本地音频/视频文件）")
@@ -78,6 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--language")
     batch.add_argument("--asr-model")
     batch.add_argument("--copy-style", choices=["raw", "light", "script"])
+    batch.add_argument("--keep-video", action="store_true", help="下载原视频（界面里可播放）")
     common(batch)
 
     pr = sub.add_parser("probe", help="只探测链接（标题/时长/字幕/平台），不下载")
@@ -104,6 +107,8 @@ def _config(args) -> Config:
             overrides[field] = value
     if getattr(args, "no_subs", False):
         overrides["prefer_subs"] = False
+    if getattr(args, "keep_video", False):
+        overrides["keep_video"] = True
     return Config.from_env(**overrides)
 
 

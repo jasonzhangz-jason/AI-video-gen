@@ -494,3 +494,30 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 - GUI「文案改写」页底部加「改写历史」卡片：`时间 · 风格 · 入→出 字数` + 输出摘要，右侧「查看 / 再编辑 / 删除」；查看会把结果回放到结果区（含并排/差异可用），再编辑把原始输入放回输入框。
 - 实测（真实 DeepSeek，非 mock）：210 字 → 207 字 / 532 tokens，历史列表出现 1 条，点「查看」结果区显示 `历史 · 10-25 00:44:23 · 210 字 → 207 字 · deepseek-chat`，正文 3 段。
 
+### 10.21 保留并展示原视频（2026-10-25 追加）
+
+- 新增 `cfg.keep_video`（`--keep-video` / GUI 勾选 / `V2I_KEEP_VIDEO=1`）：为真时 yt-dlp 取 `bv*[height<=720]+ba/b[height<=720]/best` 并 `merge_output_format=mp4`，产物落 `source.mp4`（默认只下 bestaudio，体积约 1/3）。
+- `fetch.download_audio()` 改为 `download_media()`，返回 `(路径, 是否视频)`；`source.json` 增加 `media` 字段与 `kind=video`。转写直接把 mp4 交给 faster-whisper（PyAV 解音轨），不重复下载。
+- 前端：文件列表对 `.mp4/.webm/.mkv` 标 `VIDEO`（已有 `_file_kind` + `CONTENT_TYPES` 映射），点击弹层用原生 `<video controls>` 播放，`/api/preview` 的 Range 支持让进度条可拖。
+- 实测：3 分 32 秒视频 → `source.mp4` 12.6 MB（1280 宽），转写 64 段（4.95× 实时）；GUI 文件列表识别为 `VIDEO`，弹层 `<video>` `duration=212.3s / videoWidth=1280`，标题栏显示大小与下载入口。
+
+### 10.22 老任务补下原视频（2026-10-25 追加）
+
+- 新增任务类型 `kind="video"`：`POST /api/fetch_video{dir}` 入队，worker 里 `_fetch_video_job()` 读 `meta.json` 的 `webpage_url`，强制 `keep_video=True` 重下，成功后回写 `source.json`（`kind/media/audio`），逐字稿不动。
+- `_run_summary()` 增加 `has_video`（看 `source.json` 的 media 后缀，兜底扫 `source.*`）；结果卡据此决定是否显示「补下原视频」按钮——已有视频或本地文件任务自动隐藏。
+- 前端点按钮 → 入队 → 轮询 `/api/job` → 完成后 `openRun(dir)` 重渲染文件列表。走任务队列而不是同步请求，长视频不会把 HTTP 连接吊死，进度也能在日志里看到。
+- 实测：对只有 `source.m4a` 的老任务补下载，2.8 秒拿到 14.1 MB mp4，`/api/files` 立刻出现 `kind=video`，`has_video` 由 false 变 true。
+
+### 10.23 两个开关提到模式行（2026-10-25 追加）
+
+- 「保留原视频（界面里可播放）」和「忽略缓存，全部重跑」从高级选项移到模式勾选那一排（和「文案」同位置），高级选项里删除；id 不变（`keepVideo` / `force`），JS 无需改。
+- 视觉上区分"要产出什么"和"怎么跑"：模式是实线蓝底 pill，两个开关是**虚线灰字** pill，中间加一条竖分隔线（`.modes-sep`）；勾上后虚线变实线、淡蓝底。
+- 实测 1400px 下 6 个 pill 单行（行高 35px），无横向溢出；窄屏自动换行。
+
+### 10.24 历史任务页（2026-10-25 追加）
+
+- 左菜单新增【历史任务】（排在【新建任务】之后），页面 = 列表 + 详情：列表按时间倒序，带 `VIDEO` / `部分跳过` 徽标、时长/取词方式/产物数/耗时/token；支持关键词搜索与「只看有视频的」过滤。
+- 详情没有重写一套渲染：结果卡（`#resultCard`）在切换页面时**搬 DOM**——进历史页时 append 到 `#histDetailSlot`，回别页时按记录的 `{parent, next}` 原位插回；`openRun()` 及所有 tab/文件/预览逻辑完全复用，零改动。
+- 点列表行 → `openHistoryRun(dir)`：标记 active、调用 `openRun`、滚动到卡片。
+- 实测：4 条记录正确渲染，点第一条后 11 个 tab、正文 5 段、行高亮；切回新建页结果卡自动归位。
+

@@ -23,6 +23,7 @@
 <div class="app">
   <nav class="sidenav">
     <button class="nav-item active" data-page="new" type="button"><span class="nav-ico">＋</span>新建任务</button>
+    <button class="nav-item" data-page="history" type="button"><span class="nav-ico">🕘</span>历史任务</button>
     <button class="nav-item" data-page="rewrite" type="button"><span class="nav-ico">✎</span>文案改写</button>
     <button class="nav-item" data-page="settings" type="button"><span class="nav-ico">⚙</span>系统配置</button>
     <div class="nav-foot" id="navFoot">v0.1.0</div>
@@ -68,6 +69,9 @@
           <label><input type="checkbox" name="mode" value="points" checked /><span>观点清单</span></label>
           <label><input type="checkbox" name="mode" value="article" checked /><span>长文</span></label>
           <label><input type="checkbox" name="mode" value="copy" checked /><span>文案</span></label>
+          <span class="modes-sep" aria-hidden="true"></span>
+          <label class="opt"><input type="checkbox" id="keepVideo" /><span>保留原视频（界面里可播放）</span></label>
+          <label class="opt"><input type="checkbox" id="force" /><span>忽略缓存，全部重跑</span></label>
         </div>
 
         <div class="submit-row">
@@ -128,7 +132,6 @@
               <input id="model" type="text" placeholder="留空用 .env 里的配置" />
             </label>
             <label class="check"><input type="checkbox" id="preferSubs" checked /><span>字幕优先（有字幕就不转写）</span></label>
-            <label class="check"><input type="checkbox" id="force" /><span>忽略缓存，全部重跑</span></label>
           </div>
         </details>
       </form>
@@ -163,6 +166,7 @@
       <div class="card-head">
         <h2 id="resultTitle">结果</h2>
         <span class="hint" id="resultMeta"></span>
+        <button class="ghost" id="fetchVideoBtn" type="button" hidden>补下原视频</button>
       </div>
       <nav class="tabs" id="tabs"></nav>
       <article class="doc" id="doc"></article>
@@ -179,6 +183,24 @@
     </section>
   </aside>
 </main>
+
+<section class="page" id="page-history" hidden>
+  <div class="rewrite-wrap">
+    <section class="card">
+      <div class="card-head">
+        <h2>历史任务</h2>
+        <span class="hint" id="histCount"></span>
+      </div>
+      <div class="hist-tools">
+        <input id="histSearch" type="search" placeholder="搜索标题 / 作者…" autocomplete="off" />
+        <label class="check"><input type="checkbox" id="histVideoOnly" /><span>只看有视频的</span></label>
+        <button class="ghost" id="histRefresh" type="button">刷新</button>
+      </div>
+      <ul class="hist-list" id="histList"></ul>
+    </section>
+    <div id="histDetailSlot"></div>
+  </div>
+</section>
 
 <section class="page rewrite-page" id="page-rewrite" hidden>
   <div class="rewrite-wrap">

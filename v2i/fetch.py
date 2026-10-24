@@ -143,12 +143,24 @@ def _download_subtitle(url: str, cfg: Config, workdir: Path, lang: str, ext: str
     return hits[0] if hits else None
 
 
-def download_audio(url: str, cfg: Config, workdir: Path) -> Path:
+def download_media(url: str, cfg: Config, workdir: Path) -> tuple[Path, bool]:
+    """下载媒体。keep_video=True 时拿带画面的 mp4（界面里能直接播），否则只要音频。
+
+    返回 (路径, 是否视频)。视频文件同样可以直接喂给 faster-whisper（PyAV 会解出音轨）。
+    """
     import yt_dlp
 
     opts = _base_opts(cfg)
+    if getattr(cfg, "keep_video", False):
+        opts.update({
+            "format": "bv*[height<=720]+ba/b[height<=720]/best",
+            "merge_output_format": "mp4",
+        })
+        is_video = True
+    else:
+        opts.update({"format": "bestaudio/best"})
+        is_video = False
     opts.update({
-        "format": "bestaudio/best",
         "outtmpl": {"default": str(workdir / "source.%(ext)s")},
         "overwrites": False,
     })
@@ -184,8 +196,8 @@ def download_audio(url: str, cfg: Config, workdir: Path) -> Path:
         hits = [p for p in workdir.glob("source.*") if p.suffix.lower() not in (".json", ".part")]
         path = hits[0] if hits else None
     if path is None or not path.exists():
-        raise FetchError("音频下载失败：没有找到落盘文件")
-    return path
+        raise FetchError("媒体下载失败：没有找到落盘文件")
+    return path, is_video
 
 
 # ---------------------------------------------------------------- 字幕解析
@@ -332,15 +344,23 @@ def fetch(url: str, cfg: Config, workdir: Path, force: bool = False, info: dict 
 
     # 无字幕：复用已下载的音频，避免重复请求
     prev = read_json(workdir / "source.json", {}) or {}
-    prev_audio = prev.get("audio")
-    if prev_audio and Path(prev_audio).exists() and not force:
-        audio = Path(prev_audio)
-        _log(f"  复用已下载音频：{audio.name}")
+    prev_media = prev.get("media") or prev.get("audio")
+    video_suffixes = {".mp4", ".webm", ".mkv", ".mov", ".m4v"}
+    if prev_media and Path(prev_media).exists() and not force:
+        media = Path(prev_media)
+        is_video = media.suffix.lower() in video_suffixes
+        _log(f"  复用已下载{'视频' if is_video else '音频'}：{media.name}")
     else:
-        _log("  没有可用字幕，下载音频走转写")
-        audio = download_audio(url, cfg, workdir)
-        _log(f"  音频就绪：{audio.name}（{audio.stat().st_size / 1e6:.1f} MB）")
-    source = {"kind": "audio", "audio": str(audio), "subtitle": None, "lang": None}
+        _log("  没有可用字幕，下载媒体走转写")
+        media, is_video = download_media(url, cfg, workdir)
+        _log(f"  {'视频' if is_video else '音频'}就绪：{media.name}（{media.stat().st_size / 1e6:.1f} MB）")
+    source = {
+        "kind": "video" if is_video else "audio",
+        "media": str(media),
+        "audio": str(media),
+        "subtitle": None,
+        "lang": None,
+    }
     write_json(workdir / "source.json", source)
     return {"meta": meta, "source": source, "segments": [], "cached": False}
 
