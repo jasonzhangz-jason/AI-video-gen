@@ -482,6 +482,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self._runs())
             if route == "/api/cookies":
                 return self._json(_cookie_status())
+            if route == "/api/settings":
+                return self._json(self._settings_view())
             if route == "/api/platforms":
                 from . import platforms as platforms_mod
                 url = (query.get("url") or [""])[0]
@@ -570,6 +572,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self._start(body))
             if parsed.path == "/api/rewrite":
                 return self._json(self._rewrite(body))
+            if parsed.path == "/api/settings":
+                return self._save_settings(body)
+            if parsed.path == "/api/settings/test":
+                return self._json(self._test_llm())
             if parsed.path == "/api/retry":
                 return self._json(self._start(body, retry=True))
             return self._error(404, "not found")
@@ -734,6 +740,68 @@ class Handler(BaseHTTPRequestHandler):
         DEFAULT_COOKIES.write_text(text, encoding="utf-8")
         print(f"  已更新 cookies：{DEFAULT_COOKIES}（{len(text)} 字节）", flush=True)
         return _cookie_status()
+
+    def _settings_view(self) -> dict:
+        from .settings import SETTINGS_PATH, load, mask
+
+        cfg = Config.from_env()
+        data = load()
+        return {
+            "path": str(SETTINGS_PATH),
+            "values": {k: (mask(v) if k == "V2I_API_KEY" else v) for k, v in data.items()},
+            "runtime": {
+                "has_key": bool(data.get("V2I_API_KEY")),
+                "provider": data.get("V2I_PROVIDER", ""),
+                "model": data.get("V2I_MODEL", ""),
+                "base_url": data.get("V2I_BASE_URL", ""),
+                "proxy": data.get("V2I_PROXY", ""),
+            },
+            "effective": {
+                "provider": cfg.provider,
+                "model": cfg.model,
+                "base_url": cfg.base_url,
+                "api_key": mask(cfg.api_key),
+                "ready": bool(cfg.api_key) or cfg.provider == "ollama",
+                "proxy": cfg.proxy or "",
+                "asr": {
+                    "model": cfg.asr_model,
+                    "device_setting": cfg.asr_device,
+                    "device": cfg.device,
+                    "compute_setting": cfg.asr_compute,
+                    "compute": cfg.compute_type(cfg.device),
+                    "language": cfg.language or "",
+                },
+                "copy_style": cfg.copy_style,
+                "chunk_chars": cfg.chunk_chars,
+                "project": str(PROJECT_ROOT),
+                "runs_dir": str(cfg.runs_dir),
+            },
+        }
+
+    def _save_settings(self, body: dict) -> None:
+        from .settings import save
+
+        patch = body.get("patch")
+        if not isinstance(patch, dict):
+            return self._error(400, "patch 必须是对象")
+        try:
+            save(patch)
+        except ValueError as exc:
+            return self._error(400, str(exc))
+        print(f"  设置已更新：{', '.join(patch) or '（无）'}", flush=True)
+        return self._json(self._settings_view())
+
+    def _test_llm(self) -> dict:
+        from .llm import LLM
+
+        try:
+            cfg = Config.from_env()
+            llm = LLM(cfg)
+            reply = llm.chat([{"role": "user", "content": "只回复：pong"}], max_tokens=8)
+            return {"ok": True, "reply": (reply or "").strip()[:40],
+                    "model": cfg.model, "base_url": cfg.base_url}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
 
     def _rewrite(self, body: dict) -> dict:
         """把任意文本按指定风格改写；长文自动分段后保序拼接。"""

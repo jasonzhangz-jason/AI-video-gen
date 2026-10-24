@@ -6,6 +6,8 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import settings as runtime_settings
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 # GUI 上传的 cookies.txt 默认落在这里（有就自动生效，命令行也一样）
@@ -61,7 +63,8 @@ def load_dotenv(*paths: Path) -> None:
                 line = line[7:].strip()
             key, _, value = line.partition("=")
             key, value = key.strip(), value.strip().strip('"').strip("'")
-            if key and key not in os.environ:
+            # 空值不要写进 os.environ：否则之后往 .env 补 key 会被旧的空值挡住
+            if key and value and key not in os.environ:
                 os.environ[key] = value
 
 
@@ -120,13 +123,14 @@ class Config:
         preset = PROVIDERS.get(self.provider, {})
         key_env = preset.get("env")
         self.base_url = self.base_url or _env("V2I_BASE_URL") or preset.get("base_url", "")
-        if not self.api_key and key_env:
-            self.api_key = _env(key_env) or ""
+        if not self.api_key:
+            # V2I_API_KEY 由「设置」页写入，优先级高于 provider 自带的 key 变量
+            self.api_key = _env("V2I_API_KEY") or (_env(key_env) if key_env else "") or ""
         if not self.model:
             self.model = _env("V2I_MODEL") or preset.get("model", "")
         if required and not self.api_key and key_env:
             raise ConfigError(
-                f"缺少 {key_env}。把 key 写进 {PROJECT_ROOT / '.env'}（参考 .env.example），"
+                f"缺少 {key_env}。到界面「设置」里填 API key（立即生效），或写进 {PROJECT_ROOT / '.env'}，"
                 f"或设置环境变量 {key_env}；也可用 --provider ollama 走本地模型。"
             )
         if required and not self.base_url:
@@ -165,6 +169,8 @@ class Config:
     # ---- 构造 ----
     @classmethod
     def from_env(cls, **overrides) -> "Config":
+        # 先刷运行时设置（热加载），再读 .env；设置页改完不需要重启
+        runtime_settings.apply()
         load_dotenv(PROJECT_ROOT / ".env", Path.cwd() / ".env")
         cfg = cls(
             asr_model=_env("V2I_ASR_MODEL", "small"),

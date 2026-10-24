@@ -29,10 +29,13 @@ python -m pip install --target "$root\vendor" --upgrade `
 
 > `av` 必须 < 19：av 19 去掉了 `metadata_errors` 参数，faster-whisper 1.2.1 会直接报 `TypeError`。
 
-配置 key：
+配置 key（二选一）：
+
+1. **界面里配（推荐，立即生效）**：启动后左侧「系统配置」→ 填 API Key → 保存，不用重启；
+2. 写进 `.env`：`DEEPSEEK_API_KEY=sk-...`（改完需要重启进程）。
 
 ```powershell
-notepad "$root\.env"     # 填 DEEPSEEK_API_KEY=sk-...
+notepad "$root\.env"     # 也可以走文件
 ```
 
 自检：
@@ -119,6 +122,23 @@ v2i.cmd            # 不带参数双击 = 同一个效果；带参数 = 当 CLI 
 ![内嵌预览](docs/gui-preview.png)
 
 ![高级选项](docs/gui-advanced.png)
+
+### 系统配置页 · 启动后改配置（热加载）
+
+左侧「系统配置」可以在**不重启**的情况下改这些：
+
+![系统配置](docs/gui-settings.png)
+
+| 分组 | 项 |
+|---|---|
+| 大模型 | Provider、模型、Base URL、**API Key** |
+| 语音转写 | ASR 模型（tiny→large-v3/turbo）、设备（auto/cpu/cuda）、精度（int8/float16）、默认语言 |
+| 网络与其他 | 代理、分块字数、文案风格 |
+
+- 保存后立即生效：状态点从「未配置」变绿，「提炼」「一键改写」马上能用，下一条任务就用新的 ASR 模型；
+- **「测试大模型连接」**会真的发一次请求（回 `pong` 才算通），key 错直接告诉你 401；
+- API Key 只显示 `sk-d…3456` 掩码，输入框留空表示不修改；「清除 API Key」回退到 `.env` / 环境变量；
+- 配置写在 `.runtime/settings.json`（已 gitignore），优先级高于 `.env`；「当前生效」区显示的是**解析后的真实值**（如 `small · cpu/int8 · 自动语言`）。
 
 ![平台与探测](docs/gui-platform.png)
 

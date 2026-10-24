@@ -657,3 +657,28 @@ button.mini:hover { background: #ffedd5; }
   .app-body .layout { padding: 0 12px; }
   .rewrite-wrap { padding: 14px 12px 32px; }
 }
+/* ---------- 设置页 ---------- */
+.set-grid { margin-bottom: 6px; }
+.set-grid input, .set-grid select {
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--ink);
+  background: #fbfcfe;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: none;
+}
+.set-grid input:focus, .set-grid select:focus { border-color: #b7c4f8; box-shadow: 0 0 0 3px rgba(59, 98, 246, .12); }
+#setEffective .file-row { grid-template-columns: 180px minmax(0, 1fr); }
+#setEffective .fname { color: var(--muted); }
+#setEffective .fmeta { font-family: "Cascadia Mono", Consolas, monospace; color: var(--ink-2); }
+.hint.ok { color: var(--ok); }
+.set-group {
+  margin: 22px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.set-group:first-of-type { margin-top: 6px; }

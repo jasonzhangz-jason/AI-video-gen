@@ -24,6 +24,7 @@
   <nav class="sidenav">
     <button class="nav-item active" data-page="new" type="button"><span class="nav-ico">＋</span>新建任务</button>
     <button class="nav-item" data-page="rewrite" type="button"><span class="nav-ico">✎</span>文案改写</button>
+    <button class="nav-item" data-page="settings" type="button"><span class="nav-ico">⚙</span>系统配置</button>
     <div class="nav-foot" id="navFoot">v0.1.0</div>
   </nav>
   <div class="app-body">
@@ -216,6 +217,112 @@
         <button class="ghost" id="rwCopy" type="button">复制全文</button>
       </div>
       <article class="doc rw-out" id="rwOut"></article>
+    </section>
+  </div>
+</section>
+
+<section class="page" id="page-settings" hidden>
+  <div class="rewrite-wrap">
+    <section class="card">
+      <div class="card-head">
+        <h2>系统配置</h2>
+        <span class="hint" id="setPath"></span>
+      </div>
+
+      <h3 class="set-group">大模型</h3>
+      <div class="adv-grid set-grid">
+        <label>Provider
+          <select id="setProvider">
+            <option value="deepseek">deepseek</option>
+            <option value="openai">openai</option>
+            <option value="moonshot">moonshot</option>
+            <option value="siliconflow">siliconflow</option>
+            <option value="ollama">ollama（本地，免 key）</option>
+          </select>
+        </label>
+        <label>模型
+          <input id="setModel" type="text" placeholder="deepseek-chat" autocomplete="off" />
+        </label>
+        <label>Base URL
+          <input id="setBaseUrl" type="text" placeholder="https://api.deepseek.com/v1" autocomplete="off" />
+        </label>
+        <label>API Key
+          <input id="setKey" type="password" placeholder="sk-…（留空=不修改）" autocomplete="off" />
+        </label>
+      </div>
+      <p class="hint" id="setKeyHint">已配置的 key 不会回显，留空表示保持不变。</p>
+
+      <h3 class="set-group">语音转写</h3>
+      <div class="adv-grid set-grid">
+        <label>ASR 模型
+          <select id="setAsrModel">
+            <option value="">跟随默认（small）</option>
+            <option value="tiny">tiny</option>
+            <option value="base">base</option>
+            <option value="small">small</option>
+            <option value="medium">medium</option>
+            <option value="large-v3">large-v3</option>
+            <option value="turbo">turbo</option>
+          </select>
+        </label>
+        <label>设备
+          <select id="setAsrDevice">
+            <option value="">跟随默认（auto）</option>
+            <option value="auto">auto</option>
+            <option value="cpu">cpu</option>
+            <option value="cuda">cuda</option>
+          </select>
+        </label>
+        <label>计算精度
+          <select id="setAsrCompute">
+            <option value="">跟随默认（auto）</option>
+            <option value="auto">auto</option>
+            <option value="int8">int8</option>
+            <option value="float16">float16</option>
+          </select>
+        </label>
+        <label>默认语言
+          <select id="setLanguage">
+            <option value="">自动检测</option>
+            <option value="zh">中文</option>
+            <option value="en">英文</option>
+            <option value="ja">日文</option>
+          </select>
+        </label>
+      </div>
+
+      <h3 class="set-group">网络与其他</h3>
+      <div class="adv-grid set-grid">
+        <label>代理
+          <input id="setProxy" type="text" placeholder="http://127.0.0.1:7890" autocomplete="off" />
+        </label>
+        <label>分块字数
+          <input id="setChunk" type="number" min="400" max="6000" step="100" />
+        </label>
+        <label>文案风格
+          <select id="setCopyStyle">
+            <option value="">跟随默认（轻度整理）</option>
+            <option value="raw">原样</option>
+            <option value="light">轻度整理</option>
+            <option value="script">口播稿</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="rw-actions">
+        <button class="primary" id="setSave" type="button">保存并生效</button>
+        <button class="ghost" id="setTest" type="button">测试大模型连接</button>
+        <button class="ghost" id="setClear" type="button">清除 API Key</button>
+        <span class="hint" id="setHint"></span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>当前生效</h2>
+        <span class="hint">保存后立即生效，不需要重启</span>
+      </div>
+      <ul class="file-list" id="setEffective"></ul>
     </section>
   </div>
 </section>

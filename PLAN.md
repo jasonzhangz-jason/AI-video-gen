@@ -453,3 +453,21 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 - `文案改写`页支持「从任务导入」：读该任务的 `transcript.md`，剥掉标题、元信息行和 `[mm:ss]` 前缀后填入输入框。
 - 深链 `#page=rewrite` 可直达；缺 key 时接口返回明确错误，页面用红字提示而不是弹窗。
 - 验证：临时起 mock LLM 实例（8796 端口）跑通整条 UI 流程（输入 228 字 → 输出 6 段 280 字 → 复制可用），随后关掉临时实例，主实例（8765）保持真实配置。
+
+### 10.16 启动后配置 key + 配置热加载（2026-10-25 追加）
+
+- 新增 `v2i/settings.py`：运行时设置存 `.runtime/settings.json`，`apply()` 每次把白名单键刷进 `os.environ`（并撤销已删除的键）。
+- `Config.from_env()` 开头调用 `settings.apply()`，所以**改完设置、下一条任务立即用新配置**，不用重启。
+- 修掉一个潜伏 bug：`load_dotenv` 原来会把**空值**也写进 `os.environ`，导致之后往 `.env` 补 key 永远被旧的空串挡住；现在跳过空值。
+- 修掉第二个 bug：`resolve_llm()` 只认 provider 自带的变量名（`DEEPSEEK_API_KEY`），完全忽略设置页写的 `V2I_API_KEY`；现在 `V2I_API_KEY` 优先。
+- 新增接口：`GET /api/settings`（掩码展示 + 当前生效值）、`POST /api/settings`（白名单 patch，空串=删除）、`POST /api/settings/test`（真发一次 `pong`）。
+- GUI 新增「设置」页：provider/模型/BaseURL/Key/代理 + 保存 + 测试连接 + 清除 key；状态点旁增加「去设置」直达。
+- 实测热加载：无 key → `ready=False`；POST 一个测试 key → **未重启** `ready=True`、`api_key` 显示 `sk-t…1234`；改模型 → `status.model` 立即变成 `deepseek-reasoner`；`test` 接口返回 401（证明确实拿新 key 发了请求）；清除后回到 `False`。
+
+### 10.17 菜单升级为【系统配置】（2026-10-25 追加）
+
+- 左菜单第三项由「设置」改名【系统配置】，页面从"只配 LLM"扩成三组：大模型 / 语音转写 / 网络与其他。
+- 可热加载的键扩到 13 个：`V2I_API_KEY`、`V2I_PROVIDER`、`V2I_MODEL`、`V2I_BASE_URL`、`V2I_PROXY`、`V2I_COOKIES`、`V2I_COOKIES_FROM_BROWSER`、`V2I_ASR_MODEL`、`V2I_ASR_DEVICE`、`V2I_ASR_COMPUTE`、`V2I_LANGUAGE`、`V2I_COPY_STYLE`、`V2I_CHUNK_CHARS`（白名单，防止变成任意环境变量注入）。
+- `GET /api/settings` 的 `effective` 扩展为：LLM 四项 + `asr{model,device_setting,device,compute_setting,compute,language}` + `chunk_chars/copy_style/proxy/project/runs_dir`；「当前生效」区据此渲染，显示的是**解析后的真实值**而不是原始配置。
+- 保存语义：空字符串=删除该键并回退默认，所以"跟随默认"选项可用。
+- 实测热加载：一次 POST 同时改 key/model/asr/language/chunk/copy_style → 未重启 `/api/status` 立刻显示 `asr.model=base, device=cpu, compute=int8`，`effective.chunk_chars=900`、`copy_style=script`、`ready=True`；清 key 后 `ready=False`。

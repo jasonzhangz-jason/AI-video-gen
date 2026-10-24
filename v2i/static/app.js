@@ -200,7 +200,8 @@
     $("#queueHint").textContent = "";
     $("#envLine").textContent = `项目 ${st.project} ｜ 产物 ${st.runs_dir}`;
     if (!llm.ready) {
-      $("#queueHint").textContent = `提示：填好 ${llm.env_hint || "API key"} 后重启服务，提炼环节才能跑`;
+      $("#queueHint").innerHTML = `提示：填好 ${escapeHtml(llm.env_hint || "API key")} 后就能提炼 · <a href="#" id="goSettings">去设置</a>`;
+      const go = $("#goSettings"); if (go) go.addEventListener("click", (e) => { e.preventDefault(); switchPage("settings"); });
     }
     const hint = $("#defaultHint");
     if (hint) hint.textContent = `默认：字幕优先 · ${asr.model || "small"} · ${asr.compute || "int8"}`;
@@ -758,19 +759,143 @@
   // ---------------------------------------------------------------- 页面切换 / 文案改写
 
   function switchPage(name) {
-    const page = name === "rewrite" ? "rewrite" : "new";
+    const page = ["new", "rewrite", "settings"].includes(name) ? name : "new";
     document.querySelectorAll(".nav-item").forEach((b) => {
       b.classList.toggle("active", b.dataset.page === page);
     });
-    const newPage = $("#page-new");
-    const rwPage = $("#page-rewrite");
-    if (newPage) newPage.hidden = page !== "new";
-    if (rwPage) rwPage.hidden = page !== "rewrite";
-    if (page === "rewrite") {
-      history.replaceState(null, "", "#page=rewrite");
-      fillImportOptions();
-    } else if ((location.hash || "").startsWith("#page=")) {
-      history.replaceState(null, "", "#page=new");
+    [["new", "#page-new"], ["rewrite", "#page-rewrite"], ["settings", "#page-settings"]].forEach(([key, sel]) => {
+      const el = $(sel);
+      if (el) el.hidden = key !== page;
+    });
+    if (page === "new") {
+      if ((location.hash || "").startsWith("#page=")) history.replaceState(null, "", "#page=new");
+    } else {
+      history.replaceState(null, "", `#page=${page}`);
+    }
+    if (page === "rewrite") fillImportOptions();
+    if (page === "settings") loadSettings();
+  }
+
+  async function loadSettings() {
+    try {
+      const s = await api("/api/settings");
+      $("#setPath").textContent = s.path;
+      const eff = s.effective || {};
+      const asr = eff.asr || {};
+      const providers = ["deepseek", "openai", "moonshot", "siliconflow", "ollama"];
+      $("#setProvider").value = providers.includes(eff.provider) ? eff.provider : "deepseek";
+      $("#setModel").value = eff.model || "";
+      $("#setBaseUrl").value = eff.base_url || "";
+      $("#setProxy").value = eff.proxy || "";
+      $("#setAsrModel").value = asr.model || "";
+      $("#setAsrDevice").value = asr.device_setting || "";
+      $("#setAsrCompute").value = asr.compute_setting || "";
+      $("#setLanguage").value = asr.language || "";
+      $("#setChunk").value = eff.chunk_chars || 1600;
+      $("#setCopyStyle").value = eff.copy_style || "";
+      $("#setKey").value = "";
+      const hint = $("#setKeyHint");
+      if (eff.api_key) {
+        hint.className = "hint ok";
+        hint.textContent = `已配置：${eff.api_key}（留空表示不修改）`;
+      } else {
+        hint.className = "hint warn";
+        hint.textContent = "当前没有可用的 key：转写能跑，提炼和改写会用不了。";
+      }
+      const rows = [
+        ["大模型", `${eff.provider} / ${eff.model}`],
+        ["Base URL", eff.base_url],
+        ["API Key", eff.api_key || "（未配置）"],
+        ["状态", eff.ready ? "可用" : "缺 key"],
+        ["转写", `${asr.model} · ${asr.device}/${asr.compute}${asr.language ? " · " + asr.language : " · 自动语言"}`],
+        ["分块", `${eff.chunk_chars} 字`],
+        ["文案风格", { raw: "原样", light: "轻度整理", script: "口播稿" }[eff.copy_style] || eff.copy_style],
+        ["代理", eff.proxy || "（未设置）"],
+        ["项目", eff.project],
+        ["产物目录", eff.runs_dir],
+      ];
+      $("#setEffective").innerHTML = rows.map(([k, v]) =>
+        `<li class="file-row"><span class="fname">${escapeHtml(k)}</span><span class="fmeta">${escapeHtml(String(v == null ? "" : v))}</span></li>`
+      ).join("");
+    } catch (err) {
+      $("#setHint").textContent = "读取失败：" + err.message;
+    }
+  }
+
+  async function saveSettings() {
+    const patch = {
+      V2I_PROVIDER: $("#setProvider").value,
+      V2I_MODEL: $("#setModel").value.trim(),
+      V2I_BASE_URL: $("#setBaseUrl").value.trim(),
+      V2I_PROXY: $("#setProxy").value.trim(),
+      V2I_ASR_MODEL: $("#setAsrModel").value,
+      V2I_ASR_DEVICE: $("#setAsrDevice").value,
+      V2I_ASR_COMPUTE: $("#setAsrCompute").value,
+      V2I_LANGUAGE: $("#setLanguage").value,
+      V2I_CHUNK_CHARS: $("#setChunk").value.trim(),
+      V2I_COPY_STYLE: $("#setCopyStyle").value,
+    };
+    const key = $("#setKey").value.trim();
+    if (key) patch.V2I_API_KEY = key;
+    const hint = $("#setHint");
+    hint.className = "hint";
+    hint.textContent = "保存中…";
+    try {
+      const s = await api("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ patch }),
+      });
+      if (s.error) throw new Error(s.error);
+      hint.className = "hint ok";
+      hint.textContent = "已保存并生效（无需重启）";
+      await loadSettings();
+      await loadStatus();
+    } catch (err) {
+      hint.className = "hint err";
+      hint.textContent = err.message;
+    }
+  }
+
+  async function testConnection() {
+    const hint = $("#setHint");
+    hint.className = "hint";
+    hint.textContent = "测试中…";
+    try {
+      const r = await api("/api/settings/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (r.ok) {
+        hint.className = "hint ok";
+        hint.textContent = `连通 ✓ ${r.reply} · ${r.model}`;
+      } else {
+        hint.className = "hint err";
+        hint.textContent = r.error;
+      }
+    } catch (err) {
+      hint.className = "hint err";
+      hint.textContent = err.message;
+    }
+  }
+
+  async function clearKey() {
+    if (!confirm("清除运行时保存的 API key？（会回退到 .env / 环境变量）")) return;
+    const hint = $("#setHint");
+    try {
+      await api("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ patch: { V2I_API_KEY: "" } }),
+      });
+      hint.className = "hint";
+      hint.textContent = "已清除";
+      await loadSettings();
+      await loadStatus();
+    } catch (err) {
+      hint.className = "hint err";
+      hint.textContent = err.message;
     }
   }
 
@@ -895,6 +1020,9 @@
   });
   $("#fileInput").addEventListener("change", (e) => selectFile(e.target.files[0]));
   document.querySelectorAll(".nav-item").forEach((b) => b.addEventListener("click", () => switchPage(b.dataset.page)));
+  $("#setSave").addEventListener("click", saveSettings);
+  $("#setTest").addEventListener("click", testConnection);
+  $("#setClear").addEventListener("click", clearKey);
   $("#rwInput").addEventListener("input", updateCharCount);
   $("#rwBtn").addEventListener("click", doRewrite);
   $("#rwClear").addEventListener("click", () => { $("#rwInput").value = ""; updateCharCount(); $("#rwHint").textContent = ""; });
@@ -954,6 +1082,7 @@
 
   // #page=rewrite 直达文案改写
   if ((location.hash || "").startsWith("#page=rewrite")) switchPage("rewrite");
+  if ((location.hash || "").startsWith("#page=settings")) switchPage("settings");
 
   // #run=<目录名> 直达某次结果
   const m = /^#run=(.+)$/.exec(location.hash || "");
