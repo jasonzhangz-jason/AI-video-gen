@@ -408,3 +408,12 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 - `fetch.friendly_error()`：把 yt-dlp 的英文报错翻译成"下一步做什么"（bot 校验 / 新鲜 cookie / DPAPI 解密失败 / 不支持的 URL 形式 / 403 / 超时）。
 - 实测结论：B 站与音频直链端到端可用；YouTube 可达但触发 bot 校验；抖音要求 fresh cookies 且只认 `/video/<id>`；其余平台受 cookie/代理限制未实测通过——已在 README 写成矩阵，不夸大。
 - 顺手修掉 ASR 的一个日志噪音：关闭 VAD 重试时会把同一句提示打印两次。
+
+### 10.11 登录态 cookies 上传（2026-10-25 追加）
+
+- 新增 `POST /api/cookies`（原始字节）、`GET /api/cookies`（状态）、`POST /api/cookies/clear`；文件固定存 `项目/.cookies/cookies.txt`。
+- `Config.from_env()` 增加自动发现：`V2I_COOKIES` 优先，否则 `.cookies/cookies.txt` 存在即生效——所以 **GUI 上传后 CLI 也立即用得上**，不需要改 `.env` 或重启。
+- 上传做格式校验（Netscape 头或制表符 7 列），JSON 导出直接 400 并说明原因；旧文件自动备份为 `.bak`。
+- 任务日志会打印 `使用 cookies：cookies.txt（N B）`，出问题时能立刻确认到底带没带上。
+- 实测：上传 → 状态显示「已上传 · N 条 · 时间」→ `v2i fetch` 日志出现 `使用 cookies` → 清除后恢复「未上传」；`Config.from_env().cookies` 指向 `.cookies/cookies.txt`。
+- 注意：yt-dlp 会回写站点下发的新 cookie，文件会随使用变大，属预期行为。

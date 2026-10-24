@@ -141,10 +141,17 @@ v2i.cmd            # 不带参数双击 = 同一个效果；带参数 = 当 CLI 
 | 快手 / 小红书 / 微博 | ⚠️ 需 cookies | 未登录态下基本都要求 cookie，本机无登录态未实测通过 |
 | X / TikTok / Instagram / Vimeo | ⚠️ 需代理 + cookies | 国内直连不稳，部分内容需要登录 |
 
-**两种给 cookie 的方式**（抖音/小红书/X 基本绕不开）：
+**给 cookie 的三条路**（抖音/小红书/X 基本绕不开）：
 
-1. **浏览器扩展导出** `cookies.txt`（Netscape 格式），路径写进 `.env` 的 `V2I_COOKIES=...`，或 GUI 高级选项里的浏览器 cookies；
-2. **直接读浏览器**：GUI 高级选项选 Chrome / Edge / Firefox，或命令行 `--cookies-from-browser chrome`。
+1. **GUI 直接上传**（最省事）：高级选项 →「登录态 cookies」→ 上传 `cookies.txt`，存到项目 `.cookies/cookies.txt`，**下一条任务立即生效，不用重启**，也能一键清除；
+2. **浏览器扩展导出** `cookies.txt`（Netscape 格式），路径写进 `.env` 的 `V2I_COOKIES=...`；
+3. **直接读浏览器**：GUI 高级选项选 Chrome / Edge / Firefox，或命令行 `--cookies-from-browser chrome`。
+
+![cookies 上传](docs/gui-cookies.png)
+
+> 上传时会校验格式：必须是浏览器扩展导出的 Netscape 格式（`# Netscape HTTP Cookie File` + 7 列制表符分隔），JSON 导出会被拒绝并提示。
+
+> 注意：yt-dlp 会把站点下发的新 cookie 回写到这个文件里，所以它会随着使用变长——这是正常现象。
 
 > ⚠️ 新版 Chrome / Edge（v127+）的 cookie 有 App-Bound 加密，yt-dlp 可能解不开，会报 `Failed to decrypt with DPAPI`；这时请用扩展导出 `cookies.txt`，或改用 Firefox。Chrome 正在运行时也会报 `Could not copy Chrome cookie database`，先关掉浏览器再试。
 

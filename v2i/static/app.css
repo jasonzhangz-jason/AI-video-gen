@@ -548,3 +548,26 @@ a.ghost.link:hover { background: #eef2ff; }
 .cookie-status.ok { color: var(--ok); }
 .cookie-status.warn { color: var(--warn); }
 .cookie-row .ghost { border: 1px solid var(--line); background: #fff; padding: 5px 12px; font-size: 12.5px; }
+/* ---------- 探测失败的操作按钮 ---------- */
+button.mini {
+  margin-left: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  border: 1px solid #f0c9a0;
+  background: #fff7ed;
+  color: var(--warn);
+  border-radius: 999px;
+}
+button.mini:hover { background: #ffedd5; }
+.probe-out code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: #eef1f6;
+  font: 12px "Cascadia Mono", Consolas, monospace;
+}
+.cookie-row.flash {
+  border-color: var(--accent);
+  background: #eef2ff;
+  box-shadow: 0 0 0 3px rgba(59, 98, 246, .16);
+  transition: background .2s, box-shadow .2s;
+}

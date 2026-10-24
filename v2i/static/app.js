@@ -693,12 +693,55 @@
         out.textContent = `✓ ${r.title} · ${r.duration} · ${subs} · ${r.formats} 个格式`;
       } else {
         out.className = "probe-out err";
-        out.textContent = `✗ ${r.error}`;
+        const action = r.action || "";
+        let btn = "";
+        if (action === "cookies_file" || action === "close_browser") {
+          const label = action === "close_browser" ? "改用 cookies.txt" : "上传 cookies";
+          btn = ` <button class="ghost mini" type="button" data-action="${action}">${label}</button>`;
+        } else if (action === "proxy") {
+          btn = ` <button class="ghost mini" type="button" data-action="proxy">去填代理</button>`;
+        } else if (action === "url") {
+          btn = ` <button class="ghost mini" type="button" data-action="url">支持哪种链接？</button>`;
+        }
+        out.innerHTML = `✗ ${escapeHtml(r.error || "探测失败")}${btn}`;
+        out.querySelectorAll("[data-action]").forEach((b) => {
+          b.addEventListener("click", () => runProbeAction(b.dataset.action));
+        });
       }
     } catch (err) {
       out.className = "probe-out err";
       out.textContent = `✗ ${err.message}`;
     }
+  }
+
+  function runProbeAction(action) {
+    const out = $("#probeOut");
+    if (action === "proxy") {
+      const adv = document.querySelector(".advanced");
+      if (adv) adv.open = true;
+      const el = $("#proxy");
+      if (el) {
+        el.focus();
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+      return;
+    }
+    if (action === "url") {
+      out.className = "probe-out";
+      out.innerHTML = "抖音：<code>https://www.douyin.com/video/&lt;id&gt;</code> 或 <code>v.douyin.com</code> 短链（<b>/shipin/ 不支持</b>）；小红书：<code>xhslink.com</code> 短链或笔记页。";
+      return;
+    }
+    // cookies 类
+    const adv = document.querySelector(".advanced");
+    if (adv) adv.open = true;
+    const row = document.querySelector(".cookie-row");
+    if (row) {
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
+      row.classList.add("flash");
+      setTimeout(() => row.classList.remove("flash"), 1600);
+    }
+    const input = $("#cookieFile");
+    if (input) input.click();
   }
 
   function setSource(src) {

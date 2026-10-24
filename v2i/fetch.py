@@ -366,3 +366,23 @@ def friendly_error(message: str) -> str:
     if "timed out" in low or "timeout" in low:
         return "网络超时：国内访问 YouTube / X / TikTok 需要代理（V2I_PROXY）。"
     return text
+
+
+def error_action(message: str) -> str | None:
+    """给前端一个可点击的下一步：cookies / cookies_file / close_browser / proxy / url。"""
+    low = str(message or "").lower()
+    if "could not copy chrome cookie database" in low:
+        return "close_browser"
+    if "failed to decrypt with dpapi" in low:
+        return "cookies_file"
+    if "fresh cookies" in low:
+        return "cookies_file"
+    if "not a bot" in low or "sign in to confirm" in low:
+        return "cookies_file"
+    if "cookie" in low or "sign in" in low or "login" in low or "private" in low:
+        return "cookies_file"
+    if "timed out" in low or "timeout" in low or "connection" in low:
+        return "proxy"
+    if "unsupported url" in low:
+        return "url"
+    return None

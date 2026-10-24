@@ -634,7 +634,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             info = fetch_mod.probe(url, cfg, fast=True)
         except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": str(exc), "hint": hint, "platform": platform_id}
+            return {"ok": False, "error": str(exc), "hint": hint, "platform": platform_id,
+                    "action": fetch_mod.error_action(str(exc))}
         meta = fetch_mod._clean_meta(info)
         subs = sorted(set(info.get("subtitles") or {}) | set(info.get("automatic_captions") or {}))
         return {
