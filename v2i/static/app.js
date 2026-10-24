@@ -218,6 +218,7 @@
   }
 
   function renderRuns(runs) {
+    state.runs = runs || [];
     const box = $("#runs");
     if (!runs.length) {
       box.innerHTML = `<p class="empty">还没有跑过任务</p>`;
@@ -442,6 +443,15 @@
     btn.textContent = on ? "运行中…" : "开始";
   }
 
+  function shortUrl(value) {
+    try {
+      const u = new URL(value);
+      return u.origin + u.pathname;
+    } catch (e) {
+      return String(value || "");
+    }
+  }
+
   function renderJob(job) {
     $("#jobCard").hidden = false;
     const stateEl = $("#jobState");
@@ -459,7 +469,8 @@
     }
 
     const meta = [];
-    if (job.url) meta.push(`<span>${escapeHtml(job.url)}</span>`);
+    if (job.url) meta.push(`<span class="job-url" title="${escapeHtml(job.url)}">${escapeHtml(shortUrl(job.url))}</span>`);
+    if (job.file) meta.push(`<span class="job-url" title="${escapeHtml(job.file)}">${escapeHtml(job.file)}</span>`);
     if (job.elapsed != null) meta.push(`<span>用时 ${fmtElapsed(job.elapsed)}</span>`);
     if (job.status === "error" && job.error) meta.push(`<span style="color:var(--bad)">${escapeHtml(job.error)}</span>`);
     $("#jobMeta").innerHTML = meta.join("");
@@ -744,6 +755,102 @@
     if (input) input.click();
   }
 
+  // ---------------------------------------------------------------- 页面切换 / 文案改写
+
+  function switchPage(name) {
+    const page = name === "rewrite" ? "rewrite" : "new";
+    document.querySelectorAll(".nav-item").forEach((b) => {
+      b.classList.toggle("active", b.dataset.page === page);
+    });
+    const newPage = $("#page-new");
+    const rwPage = $("#page-rewrite");
+    if (newPage) newPage.hidden = page !== "new";
+    if (rwPage) rwPage.hidden = page !== "rewrite";
+    if (page === "rewrite") {
+      history.replaceState(null, "", "#page=rewrite");
+      fillImportOptions();
+    } else if ((location.hash || "").startsWith("#page=")) {
+      history.replaceState(null, "", "#page=new");
+    }
+  }
+
+  function fillImportOptions() {
+    const select = $("#rwImport");
+    if (!select) return;
+    const runs = state.runs || [];
+    const current = select.value;
+    select.innerHTML = '<option value="">选择一条任务…</option>' + runs
+      .filter((r) => r.has_transcript)
+      .map((r) => `<option value="${escapeHtml(r.dir)}">${escapeHtml(String(r.title).slice(0, 26))}</option>`)
+      .join("");
+    if (current) select.value = current;
+  }
+
+  function updateCharCount() {
+    const el = $("#rwInput");
+    if (el && $("#rwCount")) $("#rwCount").textContent = `${el.value.length} 字`;
+  }
+
+  async function importTranscript(dir) {
+    if (!dir) return;
+    const hint = $("#rwHint");
+    hint.className = "hint";
+    hint.textContent = "读取逐字稿…";
+    try {
+      const res = await fetch(`/api/file?dir=${encodeURIComponent(dir)}&name=transcript.md`);
+      const md = await res.text();
+      if (!res.ok) throw new Error(md);
+      const lines = md.split("\n")
+        .filter((l) => l.trim() && !l.startsWith("# ") && !l.startsWith("- "))
+        .map((l) => l.replace(/^\*\*\[\d{1,2}:\d{2}(?::\d{2})?\]\*\*\s*/, "").trim())
+        .filter(Boolean);
+      $("#rwInput").value = lines.join("\n\n");
+      updateCharCount();
+      hint.textContent = `已导入 ${lines.length} 段`;
+    } catch (err) {
+      hint.className = "hint err";
+      hint.textContent = "导入失败：" + err.message;
+    }
+  }
+
+  async function doRewrite() {
+    const text = $("#rwInput").value.trim();
+    const hint = $("#rwHint");
+    if (text.length < 10) {
+      hint.className = "hint warn";
+      hint.textContent = "至少 10 个字";
+      return;
+    }
+    $("#rwBtn").disabled = true;
+    $("#rwBtn").textContent = "改写中…";
+    hint.className = "hint";
+    hint.textContent = "调用模型…";
+    try {
+      const r = await api("/api/rewrite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, style: $("#rwStyle").value }),
+      });
+      if (r.error) throw new Error(r.error);
+      const card = $("#rwOutCard");
+      card.hidden = false;
+      $("#rwOut").innerHTML = String(r.text || "")
+        .split(/\n{2,}/)
+        .map((p) => `<p>${escapeHtml(p)}</p>`)
+        .join("");
+      $("#rwMeta").textContent = `${r.in_chars} 字 → ${r.chars} 字 · ${r.tokens} tokens · ${r.model}`;
+      state.lastRewrite = r.text;
+      hint.textContent = "完成";
+      card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (err) {
+      hint.className = "hint err";
+      hint.textContent = err.message;
+    } finally {
+      $("#rwBtn").disabled = false;
+      $("#rwBtn").textContent = "一键改写";
+    }
+  }
+
   function setSource(src) {
     state.src = src;
     document.querySelectorAll("#srcSwitch .seg").forEach((el) => {
@@ -787,6 +894,15 @@
     if (e.target.id !== "fileInput") $("#fileInput").click();
   });
   $("#fileInput").addEventListener("change", (e) => selectFile(e.target.files[0]));
+  document.querySelectorAll(".nav-item").forEach((b) => b.addEventListener("click", () => switchPage(b.dataset.page)));
+  $("#rwInput").addEventListener("input", updateCharCount);
+  $("#rwBtn").addEventListener("click", doRewrite);
+  $("#rwClear").addEventListener("click", () => { $("#rwInput").value = ""; updateCharCount(); $("#rwHint").textContent = ""; });
+  $("#rwImport").addEventListener("change", (e) => importTranscript(e.target.value));
+  $("#rwCopy").addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(state.lastRewrite || ""); $("#rwHint").textContent = "已复制"; }
+    catch (e) { $("#rwHint").textContent = "复制失败"; }
+  });
   $("#probeBtn").addEventListener("click", probeUrl);
   $("#cookiePick").addEventListener("click", () => $("#cookieFile").click());
   $("#cookieFile").addEventListener("change", (e) => { if (e.target.files[0]) uploadCookies(e.target.files[0]); e.target.value = ""; });
@@ -835,6 +951,9 @@
   loadRuns();
   loadPlatforms();
   loadCookies();
+
+  // #page=rewrite 直达文案改写
+  if ((location.hash || "").startsWith("#page=rewrite")) switchPage("rewrite");
 
   // #run=<目录名> 直达某次结果
   const m = /^#run=(.+)$/.exec(location.hash || "");

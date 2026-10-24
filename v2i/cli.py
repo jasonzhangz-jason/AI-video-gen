@@ -277,6 +277,15 @@ def _cmd_render(args) -> int:
         write_json(workdir / "manifest.json", read_json(workdir / "manifest.json", {}) or {})
         article.write_text(render.article_md(meta, body, cfg, transcript), encoding="utf-8")
         written.append("article")
+    # 逐字稿也重新生成（来源 URL 会被截短，避免撑爆版面）
+    segments = transcript.get("segments") or []
+    if segments:
+        from . import normalize as norm
+
+        (workdir / "transcript.md").write_text(
+            norm.to_markdown(meta, segments, transcript.get("source") or {}), encoding="utf-8"
+        )
+        written.append("逐字稿")
     if not written:
         _err("没有可渲染的产物（out/*.json 不存在）")
         return 2

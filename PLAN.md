@@ -417,3 +417,39 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 - 任务日志会打印 `使用 cookies：cookies.txt（N B）`，出问题时能立刻确认到底带没带上。
 - 实测：上传 → 状态显示「已上传 · N 条 · 时间」→ `v2i fetch` 日志出现 `使用 cookies` → 清除后恢复「未上传」；`Config.from_env().cookies` 指向 `.cookies/cookies.txt`。
 - 注意：yt-dlp 会回写站点下发的新 cookie，文件会随使用变大，属预期行为。
+
+### 10.12 探测失败可点击的操作（2026-10-25 追加）
+
+- `fetch.error_action()` 把报错归类成 `cookies_file` / `close_browser` / `proxy` / `url`，`/api/probe` 一并返回 `action`。
+- 前端按 action 渲染小按钮：`上传 cookies` / `改用 cookies.txt` / `去填代理` / `支持哪种链接？`；点击后展开高级选项、滚动并高亮对应控件（`cookie-row.flash`），cookies 类直接唤起文件选择。
+- 分类要同时认中英两种措辞——因为 `friendly_error()` 会先把英文翻成中文，早期版本只看英文关键字导致 action 丢失（实测抖音 `/shipin/`、X 都漏判，已修）。
+- 实测：YouTube/X → `proxy`；抖音 `/video/` → `cookies_file`；抖音 `/shipin/` → `url`；B 站 → `ok`，按钮渲染与点击行为（展开+高亮）均验证通过。
+
+### 10.13 长链接溢出修复（2026-10-25 追加）
+
+- 现象：逐字稿页整页被撑宽（实测 `#doc` scrollWidth 3638px vs clientWidth 824px，页面横向滚动）。
+- 两处原因叠加：① `transcript.md` 的"来源"直接写了 B 站分享链接，带 `vd_source`/`trackid` 等参数长达 800+ 字符，且是一个不可断行的 token；② `.doc`/页脚/任务条都没有 `overflow-wrap`，长 token 直接顶出容器。
+- 修法：
+  - `util.display_url()` 统一剥掉 query/fragment（render 与 normalize 共用），逐字稿来源变成 `https://www.bilibili.com/video/BV.../`；
+  - CSS 对 `.doc`、`.footer`、`.job-meta span` 加 `overflow-wrap: anywhere` / `word-break: break-all`；
+  - `v2i render` 增加"重写 transcript.md"，老产物不用重跑 ASR 也能修好。
+- 验证：1400px 下逐个点过 11 个页签，全部 `docScroll == docClient`；缩到 584px 视口时 `bodyScroll 569 < window 584`，无横向滚动。
+
+### 10.14 任务进度条里的 URL 展示（2026-10-25 追加）
+
+- 现象：任务卡里的链接是完整分享地址（800+ 字符），在窄窗口下要么换行成 5 行、要么把卡片撑宽。
+- 修法：
+  - 前端 `shortUrl()` 只渲染 `origin + pathname`，完整地址放进 `title` 悬停可见；
+  - `.job-meta .job-url` 单独占一行（`flex: 1 1 100%`）+ `overflow:hidden / text-overflow:ellipsis / nowrap`，超长就省略号，永不变形；
+  - 本地文件任务同样走这条样式（显示文件名）；
+  - 后端 `fetch` 的日志也改成打 `display_url(url)`，日志里不再出现 800 字符的链接。
+- 验证：真实跑一条带完整跟踪参数的 B 站任务，卡片内 URL 渲染为 `https://www.bilibili.com/video/BV1ih8q6rEMP/`；1400px 下 `bodyScroll 1369 < 1384`，模拟 480px 视口 `bodyScroll 465 < 480`，`text-overflow: ellipsis` 生效。
+
+### 10.15 左侧菜单 + 文案改写页（2026-10-25 追加）
+
+- 界面拆成两页：`新建任务`（原页面）与 `文案改写`；左侧固定导航（`<nav class="sidenav">`），窄屏自动变成顶部横排。
+- 新接口 `POST /api/rewrite{text,style}`：`light` 用 `prompts/rewrite_light.md`，`script` 用 `prompts/rewrite_script.md`；输出是纯文本（不走 JSON），前端按空行切段渲染。
+- 长文按 6000 字切片、逐段改写后保序拼接；返回 `in_chars/chars/tokens/model`，界面直接显示"228 字 → 280 字 · 200 tokens"。
+- `文案改写`页支持「从任务导入」：读该任务的 `transcript.md`，剥掉标题、元信息行和 `[mm:ss]` 前缀后填入输入框。
+- 深链 `#page=rewrite` 可直达；缺 key 时接口返回明确错误，页面用红字提示而不是弹窗。
+- 验证：临时起 mock LLM 实例（8796 端口）跑通整条 UI 流程（输入 228 字 → 输出 6 段 280 字 → 复制可用），随后关掉临时实例，主实例（8765）保持真实配置。

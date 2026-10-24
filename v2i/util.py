@@ -7,6 +7,7 @@ import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 
 def fmt_ts(seconds: float) -> str:
@@ -126,3 +127,14 @@ def fix_cjk_punct(text: str) -> str:
 def clean_cjk(text: str) -> str:
     """转写文本的统一清洗入口：半角标点 -> 全角，繁体 -> 简体。"""
     return to_simplified(fix_cjk_punct(text or ""))
+
+def display_url(url: str) -> str:
+    """去掉跟踪参数：B 站分享链接能长到 800 字符，渲染出来会撑爆版面。"""
+    url = str(url or "")
+    try:
+        parts = urlsplit(url)
+        if parts.scheme in ("http", "https") and parts.netloc:
+            return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    except Exception:
+        pass
+    return url

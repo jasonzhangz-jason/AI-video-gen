@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .util import clean_cjk, fmt_ts, write_json, write_text
+from .util import clean_cjk, display_url, fmt_ts, write_json, write_text
 
 # 句末标点（中英混排都覆盖）
 _END_RE = re.compile(r"[^。！？!?；;…\n]+[。！？!?；;…]*")
@@ -144,7 +144,7 @@ def to_markdown(meta: dict, segments: list[dict], source: dict) -> str:
     lines = [
         f"# {title} — 逐字稿",
         "",
-        f"- 来源：{meta.get('webpage_url') or ''}",
+        f"- 来源：{display_url(meta.get('webpage_url') or '')}",
         f"- 作者：{meta.get('uploader') or '未知'}",
         f"- 时长：{meta.get('duration_text') or fmt_ts(meta.get('duration') or 0)}",
         f"- 取词方式：{'字幕直取（' + str(source.get('lang')) + '）' if source.get('kind') == 'subtitle' else '本地转写'}",

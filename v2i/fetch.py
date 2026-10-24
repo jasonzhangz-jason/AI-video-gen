@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from .config import Config
-from .util import fmt_ts, now_iso, read_json, write_json
+from .util import display_url, fmt_ts, now_iso, read_json, write_json
 
 # 字幕语言优先级：中文优先，其次英文；具体命中哪个由视频实际提供的字幕决定
 LANG_PRIORITY = [
@@ -296,7 +296,7 @@ def fetch(url: str, cfg: Config, workdir: Path, force: bool = False, info: dict 
         _log(f"  使用 cookies：{Path(cfg.cookies).name}（{Path(cfg.cookies).stat().st_size} B）")
     elif getattr(cfg, "cookies_from_browser", None):
         _log(f"  使用浏览器 cookies：{cfg.cookies_from_browser}")
-    _log(f"  解析链接：{url}")
+    _log(f"  解析链接：{display_url(url)}")
     info = info or probe(url, cfg)
     meta = _clean_meta(info)
     write_json(workdir / "meta.json", meta)
@@ -363,26 +363,31 @@ def friendly_error(message: str) -> str:
         return "内容需要登录：导出 cookies.txt 后设 V2I_COOKIES。"
     if "http error 403" in low:
         return "403：可能需要 cookies 或代理；B 站高清晰度也要登录。"
+    if "unable to download webpage" in low or "connection refused" in low or "connection reset" in low:
+        return "网页打不开（网络被阻断或站点拒绝）：国内访问 YouTube / X / TikTok 需要代理（V2I_PROXY）。"
     if "timed out" in low or "timeout" in low:
         return "网络超时：国内访问 YouTube / X / TikTok 需要代理（V2I_PROXY）。"
     return text
 
 
 def error_action(message: str) -> str | None:
-    """给前端一个可点击的下一步：cookies / cookies_file / close_browser / proxy / url。"""
-    low = str(message or "").lower()
-    if "could not copy chrome cookie database" in low:
+    """给前端一个可点击的下一步：cookies_file / close_browser / proxy / url。
+
+    报错可能已被 friendly_error() 翻译成中文，所以中英两种措辞都要认。
+    """
+    text = str(message or "")
+    low = text.lower()
+    if "could not copy chrome cookie database" in low or "chrome 正在运行" in text:
         return "close_browser"
-    if "failed to decrypt with dpapi" in low:
+    if "failed to decrypt with dpapi" in low or "app-bound" in low or "app bound" in low:
         return "cookies_file"
-    if "fresh cookies" in low:
+    if ("fresh cookies" in low or "not a bot" in low or "sign in" in low or "login" in low
+            or "private" in low or "cookie" in low
+            or "需要新鲜 cookies" in text or "机器人校验" in text or "需要登录" in text):
         return "cookies_file"
-    if "not a bot" in low or "sign in to confirm" in low:
-        return "cookies_file"
-    if "cookie" in low or "sign in" in low or "login" in low or "private" in low:
-        return "cookies_file"
-    if "timed out" in low or "timeout" in low or "connection" in low:
+    if ("unable to download webpage" in low or "timed out" in low or "timeout" in low
+            or "connection" in low or "网络超时" in text or "网页打不开" in text):
         return "proxy"
-    if "unsupported url" in low:
+    if "unsupported url" in low or "链接形式不被支持" in text:
         return "url"
     return None

@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from .config import Config
-from .util import fmt_ts, now_iso
+from .util import display_url, fmt_ts, now_iso
 
 __all__ = ["summary_md", "points_md", "article_md", "copy_md", "copy_txt"]
 
@@ -16,15 +16,8 @@ def _q(value) -> str:
 
 
 def _display_url(url: str) -> str:
-    """去掉跟踪参数（B 站链接能长到 800 字符），只留 scheme://host/path。"""
-    url = str(url or "")
-    try:
-        parts = urlsplit(url)
-        if parts.scheme in ("http", "https") and parts.netloc:
-            return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
-    except Exception:
-        pass
-    return url
+    """保留旧名字，实现搬到 util.display_url（normalize 也要用）。"""
+    return display_url(url)
 
 
 def _frontmatter(meta: dict, cfg: Config, transcript: dict, extra: dict | None = None) -> str:

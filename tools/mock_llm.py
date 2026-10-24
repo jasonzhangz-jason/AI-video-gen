@@ -1,4 +1,4 @@
-"""开发用 mock LLM：兼容 OpenAI /v1/chat/completions，用于在没有 API key 时验证提炼链路。
+﻿"""开发用 mock LLM：兼容 OpenAI /v1/chat/completions，用于在没有 API key 时验证提炼链路。
 
 只做一件事：根据 system prompt 判断当前是 map / summary / points / article，
 返回结构合法、带真实时间码的假数据。**不要用于生产**。
@@ -15,6 +15,18 @@ import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TS_RE = re.compile(r"\[(\d{1,2}:\d{2})\]")
+
+SAMPLE_REWRITE = """短视频越来越难做，原因不是竞争激烈。
+
+真正变的是平台的推荐机制。过去平台按关注分发，你有粉丝就有播放；现在平台按完播率分发，粉丝多也未必有人看。规则一换，过去那套涨粉经验就失效了。
+
+第二个变化是用户的耐心。前三秒留不住人，后面做得再好，观众也看不到。于是开头三秒成了新的生死线。
+
+第三个变化是同质化。一个爆款出现，一周内就有上千个模仿者，观众很快就腻了。
+
+所以能活下来的创作者，不是最会模仿的，而是能持续提供独特信息增量的人。与其追热点，不如把一个小领域挖深，做别人不愿意做的脏活累活。
+
+最后一句：工具只是放大器，它放大的是你的判断力，不是你的懒惰。"""
 
 MAP_TEMPLATE = {
     "gist": "（mock）这一段在讲一个具体问题",
@@ -128,6 +140,9 @@ def respond(payload: dict) -> str:
         data["structure"] = structure
         _fill(data, stamps)
         return json.dumps(data, ensure_ascii=False)
+
+    if "中文编辑" in system or "口播稿作者" in system:
+        return SAMPLE_REWRITE
 
     if "长文" in system:
         body = ARTICLE

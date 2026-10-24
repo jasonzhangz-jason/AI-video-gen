@@ -57,6 +57,23 @@ ALLOWED_MEDIA = {
 MAX_UPLOAD_BYTES = 4 * 1024 ** 3
 
 
+def _split_text(text: str, limit: int = 6000) -> list[str]:
+    """按段落切成不超过 limit 的片段，避免长文一次性塞爆上下文。"""
+    parts: list[str] = []
+    buffer = ""
+    for paragraph in text.split("\n\n"):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+        if buffer and len(buffer) + len(paragraph) > limit:
+            parts.append(buffer)
+            buffer = ""
+        buffer = f"{buffer}\n\n{paragraph}" if buffer else paragraph
+    if buffer:
+        parts.append(buffer)
+    return parts or [text[:limit]]
+
+
 def _cookie_status() -> dict:
     path = DEFAULT_COOKIES
     if not path.exists():
@@ -551,6 +568,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if parsed.path == "/api/start":
                 return self._json(self._start(body))
+            if parsed.path == "/api/rewrite":
+                return self._json(self._rewrite(body))
             if parsed.path == "/api/retry":
                 return self._json(self._start(body, retry=True))
             return self._error(404, "not found")
@@ -715,6 +734,44 @@ class Handler(BaseHTTPRequestHandler):
         DEFAULT_COOKIES.write_text(text, encoding="utf-8")
         print(f"  已更新 cookies：{DEFAULT_COOKIES}（{len(text)} 字节）", flush=True)
         return _cookie_status()
+
+    def _rewrite(self, body: dict) -> dict:
+        """把任意文本按指定风格改写；长文自动分段后保序拼接。"""
+        from .llm import LLM, load_prompt
+
+        text = str(body.get("text") or "").strip()
+        if len(text) < 10:
+            return {"error": "文本太短了，至少 10 个字"}
+        if len(text) > 200_000:
+            return {"error": "文本太长（上限 20 万字），请分段处理"}
+        style = body.get("style") if body.get("style") in ("light", "script") else "light"
+        prompt_name = "rewrite_script" if style == "script" else "rewrite_light"
+        try:
+            cfg = Config.from_env(model=body.get("model") or None)
+            llm = LLM(cfg)
+        except ConfigError as exc:
+            return {"error": str(exc)}
+        system = load_prompt(prompt_name)
+        parts = _split_text(text)
+        pieces: list[str] = []
+        for index, part in enumerate(parts, 1):
+            label = f"（第 {index}/{len(parts)} 段）" if len(parts) > 1 else ""
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"原文{label}：\n{part}\n\n直接输出改写后的正文。"},
+            ]
+            pieces.append(llm.chat(messages, temperature=0.4).strip())
+        result = "\n\n".join(p for p in pieces if p)
+        print(f"  文案改写：{len(text)} 字 → {len(result)} 字，{llm.usage.total_tokens} tokens", flush=True)
+        return {
+            "text": result,
+            "chars": len(result),
+            "in_chars": len(text),
+            "style": style,
+            "parts": len(parts),
+            "tokens": llm.usage.total_tokens,
+            "model": cfg.model,
+        }
 
     def _upload(self, query: dict) -> dict:
         """原始字节上传（不走 multipart：标准库没有可用的 multipart 解析器）。"""
