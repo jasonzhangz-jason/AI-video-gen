@@ -772,7 +772,10 @@
     } else {
       history.replaceState(null, "", `#page=${page}`);
     }
-    if (page === "rewrite") fillImportOptions();
+    if (page === "rewrite") {
+      fillImportOptions();
+      loadRewriteHistory();
+    }
     if (page === "settings") loadSettings();
   }
 
@@ -938,6 +941,222 @@
     }
   }
 
+  function setRewriteView(view) {
+    document.querySelectorAll("#rwView .seg").forEach((b) => {
+      b.classList.toggle("active", b.dataset.view === view);
+    });
+    $("#rwOut").hidden = view !== "out";
+    $("#rwDiff").hidden = view !== "diff";
+    const sbs = $("#rwSbs");
+    if (sbs) sbs.hidden = view !== "sbs";
+    if (view !== "out") renderDiff();
+  }
+
+  function paintDiff(d) {
+    const box = $("#rwDiff");
+    const stats = $("#rwDiffStats");
+    if (stats && d.stats) {
+      stats.textContent = `相似度 ${Math.round(d.stats.ratio * 100)}% · 删 ${d.stats.removed} 字 / 增 ${d.stats.added} 字`;
+    }
+    const rows = [];
+    for (const op of d.ops || []) {
+      if (op.tag === "equal") {
+        if (op.a) rows.push(`<p class="d-eq">${escapeHtml(op.a)}</p>`);
+      } else if (op.tag === "delete") {
+        rows.push(`<p class="d-del"><span class="mark">−</span>${escapeHtml(op.a)}</p>`);
+      } else if (op.tag === "insert") {
+        rows.push(`<p class="d-ins"><span class="mark">+</span>${escapeHtml(op.b)}</p>`);
+      } else if (op.inline && op.inline.length) {
+        const parts = op.inline.map((seg) => {
+          if (seg.tag === "equal") return escapeHtml(seg.a);
+          if (seg.tag === "delete") return `<del>${escapeHtml(seg.a)}</del>`;
+          if (seg.tag === "insert") return `<ins>${escapeHtml(seg.b)}</ins>`;
+          return `<del>${escapeHtml(seg.a)}</del><ins>${escapeHtml(seg.b)}</ins>`;
+        }).join("");
+        rows.push(`<p class="d-rep">${parts}</p>`);
+      } else {
+        rows.push(`<p class="d-del"><span class="mark">−</span>${escapeHtml(op.a)}</p>`);
+        rows.push(`<p class="d-ins"><span class="mark">+</span>${escapeHtml(op.b)}</p>`);
+      }
+    }
+    box.innerHTML = rows.length ? rows.join("") : '<p class="d-none">两边完全一样。</p>';
+  }
+
+  function paintSbs(d) {
+    const box = $("#rwSbs");
+    if (!box) return;
+    const blocked = (html) => `<p class="d-none">${html}</p>`;
+    const cells = [];
+    for (const op of d.ops || []) {
+      let left = "";
+      let right = "";
+      let leftCls = "left";
+      let rightCls = "right";
+      if (op.tag === "equal") {
+        left = escapeHtml(op.a);
+        right = escapeHtml(op.a);
+      } else if (op.tag === "delete") {
+        left = escapeHtml(op.a);
+        leftCls += " del";
+      } else if (op.tag === "insert") {
+        right = escapeHtml(op.b);
+        rightCls += " ins";
+      } else if (op.inline && op.inline.length) {
+        const leftParts = [];
+        const rightParts = [];
+        for (const seg of op.inline) {
+          if (seg.tag === "equal") {
+            leftParts.push(escapeHtml(seg.a));
+            rightParts.push(escapeHtml(seg.a));
+          } else if (seg.tag === "delete") {
+            leftParts.push(`<del>${escapeHtml(seg.a)}</del>`);
+          } else if (seg.tag === "insert") {
+            rightParts.push(`<ins>${escapeHtml(seg.b)}</ins>`);
+          } else {
+            leftParts.push(`<del>${escapeHtml(seg.a)}</del>`);
+            rightParts.push(`<ins>${escapeHtml(seg.b)}</ins>`);
+          }
+        }
+        left = leftParts.join("");
+        right = rightParts.join("");
+        leftCls += " del-soft";
+        rightCls += " ins-soft";
+      } else {
+        left = escapeHtml(op.a);
+        right = escapeHtml(op.b);
+        leftCls += " del";
+        rightCls += " ins";
+      }
+      cells.push(`<div class="sbs-cell ${leftCls}">${left}</div>`);
+      cells.push(`<div class="sbs-cell ${rightCls}">${right}</div>`);
+    }
+    if (!cells.length) {
+      box.innerHTML = blocked("两边完全一样。");
+      return;
+    }
+    box.innerHTML =
+      '<div class="sbs-head"><span>原文</span><span>改写后</span></div>' +
+      `<div class="sbs-grid">${cells.join("")}</div>`;
+  }
+
+  async function renderDiff() {
+    const box = $("#rwDiff");
+    if (!state.lastRewrite) {
+      box.innerHTML = '<p class="d-none">先点一次「一键改写」，再来对比。</p>';
+      return;
+    }
+    if (state.diff) {
+      paintDiff(state.diff);
+      paintSbs(state.diff);
+      return;
+    }
+    box.innerHTML = '<p class="d-none">对比中…</p>';
+    try {
+      const d = await api("/api/diff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ a: state.lastInput || "", b: state.lastRewrite }),
+      });
+      if (d.error) throw new Error(d.error);
+      state.diff = d;
+      paintDiff(d);
+      paintSbs(d);
+    } catch (err) {
+      box.innerHTML = `<p class="d-none">对比失败：${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  const STYLE_LABEL = { raw: "原样", light: "轻度整理", script: "口播稿" };
+
+  async function loadRewriteHistory() {
+    const box = $("#rwHistory");
+    if (!box) return;
+    try {
+      const data = await api("/api/rewrite/history");
+      const items = data.items || [];
+      $("#rwHistoryCount").textContent = items.length ? `最近 ${items.length} 条` : "还没有记录";
+      if (!items.length) {
+        box.innerHTML = '<li class="empty" style="color:var(--muted);font-size:13px">改写过一次之后，这里会留下记录，方便回看和复用。</li>';
+        return;
+      }
+      box.innerHTML = items.map((it) => `
+        <li class="file-row rw-hist" data-id="${escapeHtml(it.id)}">
+          <span class="fname">${escapeHtml(it.at || "")} · ${escapeHtml(STYLE_LABEL[it.style] || it.style || "")} · ${it.in_chars}→${it.out_chars} 字</span>
+          <span class="fmeta rw-preview">${escapeHtml(it.preview || "")}</span>
+          <span class="factions">
+            <button class="ghost" data-act="view" type="button">查看</button>
+            <button class="ghost" data-act="edit" type="button">再编辑</button>
+            <button class="ghost" data-act="del" type="button">删除</button>
+          </span>
+        </li>`).join("");
+      box.querySelectorAll(".rw-hist").forEach((row) => {
+        const id = row.dataset.id;
+        row.querySelector('[data-act="view"]').addEventListener("click", (e) => { e.stopPropagation(); viewHistory(id); });
+        row.querySelector('[data-act="edit"]').addEventListener("click", (e) => { e.stopPropagation(); editHistory(id); });
+        row.querySelector('[data-act="del"]').addEventListener("click", (e) => { e.stopPropagation(); deleteHistory(id); });
+      });
+    } catch (err) {
+      box.innerHTML = `<li class="empty" style="color:var(--bad);font-size:13px">读取失败：${escapeHtml(err.message)}</li>`;
+    }
+  }
+
+  async function fetchHistoryItem(id) {
+    const item = await api(`/api/rewrite/history?id=${encodeURIComponent(id)}`);
+    if (item.error) throw new Error(item.error);
+    return item;
+  }
+
+  async function viewHistory(id) {
+    const hint = $("#rwHint");
+    try {
+      const item = await fetchHistoryItem(id);
+      $("#rwOutCard").hidden = false;
+      $("#rwOut").innerHTML = String(item.output || "")
+        .split(/\n{2,}/)
+        .map((p) => `<p>${escapeHtml(p)}</p>`)
+        .join("");
+      $("#rwMeta").textContent = `历史 · ${item.at} · ${item.in_chars} 字 → ${item.out_chars} 字 · ${item.model}`;
+      state.lastInput = item.input || "";
+      state.lastRewrite = item.output || "";
+      state.diff = null;
+      $("#rwDiffStats").textContent = "";
+      setRewriteView("out");
+      $("#rwOutCard").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      hint.textContent = "";
+    } catch (err) {
+      hint.className = "hint err";
+      hint.textContent = "读取失败：" + err.message;
+    }
+  }
+
+  async function editHistory(id) {
+    try {
+      const item = await fetchHistoryItem(id);
+      $("#rwInput").value = item.input || "";
+      updateCharCount();
+      $("#rwHint").textContent = "已载入原始输入，可直接再改一次";
+      $("#rwInput").scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch (err) {
+      $("#rwHint").className = "hint err";
+      $("#rwHint").textContent = "读取失败：" + err.message;
+    }
+  }
+
+  async function deleteHistory(id) {
+    if (!confirm("删除这条改写记录？")) return;
+    try {
+      await api("/api/rewrite/history/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      loadRewriteHistory();
+    } catch (err) {
+      $("#rwHint").className = "hint err";
+      $("#rwHint").textContent = "删除失败：" + err.message;
+    }
+  }
+
   async function doRewrite() {
     const text = $("#rwInput").value.trim();
     const hint = $("#rwHint");
@@ -965,7 +1184,12 @@
         .join("");
       $("#rwMeta").textContent = `${r.in_chars} 字 → ${r.chars} 字 · ${r.tokens} tokens · ${r.model}`;
       state.lastRewrite = r.text;
+      state.lastInput = text;
+      state.diff = null;
+      $("#rwDiffStats").textContent = "";
+      setRewriteView("out");
       hint.textContent = "完成";
+      loadRewriteHistory();
       card.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (err) {
       hint.className = "hint err";
@@ -1027,6 +1251,7 @@
   $("#rwBtn").addEventListener("click", doRewrite);
   $("#rwClear").addEventListener("click", () => { $("#rwInput").value = ""; updateCharCount(); $("#rwHint").textContent = ""; });
   $("#rwImport").addEventListener("change", (e) => importTranscript(e.target.value));
+  document.querySelectorAll("#rwView .seg").forEach((b) => b.addEventListener("click", () => setRewriteView(b.dataset.view)));
   $("#rwCopy").addEventListener("click", async () => {
     try { await navigator.clipboard.writeText(state.lastRewrite || ""); $("#rwHint").textContent = "已复制"; }
     catch (e) { $("#rwHint").textContent = "复制失败"; }

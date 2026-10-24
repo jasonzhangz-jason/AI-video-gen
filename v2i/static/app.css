@@ -682,3 +682,102 @@ button.mini:hover { background: #ffedd5; }
   color: var(--ink-2);
 }
 .set-group:first-of-type { margin-top: 6px; }
+/* ---------- 差异对比 ---------- */
+.rw-view { margin-bottom: 0; padding: 3px; }
+.rw-view .seg { padding: 5px 14px; font-size: 12.5px; }
+.diff { font-size: 14px; line-height: 1.85; }
+.diff p {
+  margin: 0 0 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+.diff .d-eq { color: var(--ink-2); }
+.diff .d-del { background: #fdecec; color: #8a1f1f; border-left: 3px solid #f2b8b8; }
+.diff .d-ins { background: #e9f7ef; color: #14532d; border-left: 3px solid #a9dcbe; }
+.diff .mark { font-weight: 700; margin-right: 6px; opacity: .75; }
+.diff .d-none { color: var(--muted); font-size: 13px; }
+.diff .d-rep { color: var(--ink); }
+.diff del {
+  background: #fdecec;
+  color: #8a1f1f;
+  text-decoration: none;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.diff ins {
+  background: #e9f7ef;
+  color: #14532d;
+  text-decoration: none;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+/* ---------- 并排对比 ---------- */
+.diff-sbs { display: block; }
+.sbs-head {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 6px;
+  padding-left: 2px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.sbs-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 10px;
+  align-items: start;
+}
+.sbs-cell {
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: #fbfcfe;
+  font-size: 13.5px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+.sbs-cell.empty { background: transparent; }
+.sbs-cell.del { background: #fdecec; color: #8a1f1f; }
+.sbs-cell.ins { background: #e9f7ef; color: #14532d; }
+.sbs-cell.del-soft { background: #fffafa; }
+.sbs-cell.ins-soft { background: #fafefb; }
+.sbs-cell del {
+  background: #fbdcdc;
+  color: #8a1f1f;
+  text-decoration: none;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.sbs-cell ins {
+  background: #d8f0e2;
+  color: #14532d;
+  text-decoration: none;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+@media (max-width: 860px) {
+  .sbs-grid, .sbs-head { gap: 3px 6px; }
+  .sbs-cell { padding: 4px 6px; font-size: 12.5px; line-height: 1.7; }
+}
+/* ---------- 改写历史 ---------- */
+.rw-hist { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr) auto; }
+.rw-hist .fname { font-size: 12.5px; color: var(--ink-2); }
+.rw-preview {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rw-hist .factions .ghost {
+  padding: 3px 9px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+.rw-hist:hover { border-color: #c3cdfa; background: #f7f9ff; }
+@media (max-width: 860px) {
+  .rw-hist { grid-template-columns: 1fr; }
+  .rw-preview { white-space: normal; }
+}

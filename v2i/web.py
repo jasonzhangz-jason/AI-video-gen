@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import difflib
 import io
 import json
 import queue
@@ -55,6 +56,26 @@ ALLOWED_MEDIA = {
     ".mp4", ".mkv", ".mov", ".m4v", ".webm", ".ts", ".flv",
 }
 MAX_UPLOAD_BYTES = 4 * 1024 ** 3
+
+
+def _inline_diff(a: str, b: str, limit: int = 4000) -> list[dict] | None:
+    """块内逐字对比，用于把"整句替换"渲染成"中间只有几个词变了"。"""
+    if len(a) + len(b) > limit:
+        return None
+    matcher = difflib.SequenceMatcher(a=a, b=b, autojunk=False)
+    return [
+        {"tag": tag, "a": a[i1:i2], "b": b[j1:j2]}
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes()
+    ]
+
+
+def _split_sentences(text: str, limit: int = 4000) -> list[str]:
+    """按中英文句末标点切句，保留标点；用于差异比对的可读粒度。"""
+    import re
+
+    parts = re.findall(r"[^。！？；!?;\n]+[。！？；!?;\n]?", text or "")
+    units = [p for p in (s.strip() for s in parts) if p]
+    return units[:limit]
 
 
 def _split_text(text: str, limit: int = 6000) -> list[str]:
@@ -484,6 +505,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(_cookie_status())
             if route == "/api/settings":
                 return self._json(self._settings_view())
+            if route == "/api/rewrite/history":
+                from . import history as history_mod
+
+                item_id = (query.get("id") or [""])[0]
+                if item_id:
+                    item = history_mod.get(item_id)
+                    return self._json(item or {"error": "记录不存在"}, 200 if item else 404)
+                return self._json({"items": history_mod.listing(40)})
             if route == "/api/platforms":
                 from . import platforms as platforms_mod
                 url = (query.get("url") or [""])[0]
@@ -572,6 +601,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self._start(body))
             if parsed.path == "/api/rewrite":
                 return self._json(self._rewrite(body))
+            if parsed.path == "/api/diff":
+                return self._json(self._diff(body))
+            if parsed.path == "/api/rewrite/history/delete":
+                from . import history as history_mod
+
+                ok = history_mod.delete(str(body.get("id") or ""))
+                return self._json({"ok": ok, "items": history_mod.listing(40)})
+            if parsed.path == "/api/rewrite/history/clear":
+                from . import history as history_mod
+
+                removed = history_mod.clear()
+                return self._json({"ok": True, "removed": removed, "items": []})
             if parsed.path == "/api/settings":
                 return self._save_settings(body)
             if parsed.path == "/api/settings/test":
@@ -741,6 +782,53 @@ class Handler(BaseHTTPRequestHandler):
         print(f"  已更新 cookies：{DEFAULT_COOKIES}（{len(text)} 字节）", flush=True)
         return _cookie_status()
 
+    def _diff(self, body: dict) -> dict:
+        a = str(body.get("a") or "")
+        b = str(body.get("b") or "")
+        if not a.strip() and not b.strip():
+            return {"error": "两侧都是空的"}
+        if len(a) > 200_000 or len(b) > 200_000:
+            return {"error": "文本太长（上限 20 万字）"}
+        a_units = _split_sentences(a)
+        b_units = _split_sentences(b)
+        matcher = difflib.SequenceMatcher(a=a_units, b=b_units, autojunk=False)
+        ops = []
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            a_text = "".join(a_units[i1:i2])
+            b_text = "".join(b_units[j1:j2])
+            item = {"tag": tag, "a": a_text, "b": b_text}
+            if tag in ("replace", "delete", "insert"):
+                inline = _inline_diff(a_text, b_text)
+                if inline:
+                    item["inline"] = inline
+            ops.append(item)
+        # 统计用逐字比对算，句级 tag 只影响排版；否则"每句都改一点"会显示成相似度 0
+        if len(a) + len(b) <= 12_000:
+            char_matcher = difflib.SequenceMatcher(a=a, b=b, autojunk=False)
+            ratio = round(char_matcher.ratio(), 3)
+            removed = added = 0
+            for tag, i1, i2, j1, j2 in char_matcher.get_opcodes():
+                if tag in ("delete", "replace"):
+                    removed += i2 - i1
+                if tag in ("insert", "replace"):
+                    added += j2 - j1
+        else:
+            ratio = round(matcher.ratio(), 3)
+            removed = sum(len(o["a"]) for o in ops if o["tag"] in ("delete", "replace"))
+            added = sum(len(o["b"]) for o in ops if o["tag"] in ("insert", "replace"))
+        return {
+            "ops": ops,
+            "stats": {
+                "ratio": ratio,
+                "removed": removed,
+                "added": added,
+                "a_units": len(a_units),
+                "b_units": len(b_units),
+                "a_chars": len(a),
+                "b_chars": len(b),
+            },
+        }
+
     def _settings_view(self) -> dict:
         from .settings import SETTINGS_PATH, load, mask
 
@@ -831,7 +919,17 @@ class Handler(BaseHTTPRequestHandler):
             pieces.append(llm.chat(messages, temperature=0.4).strip())
         result = "\n\n".join(p for p in pieces if p)
         print(f"  文案改写：{len(text)} 字 → {len(result)} 字，{llm.usage.total_tokens} tokens", flush=True)
+        from . import history as history_mod
+
+        item = history_mod.add(
+            style=style,
+            model=cfg.model,
+            tokens=llm.usage.total_tokens,
+            input_text=text,
+            output_text=result,
+        )
         return {
+            "id": item["id"],
             "text": result,
             "chars": len(result),
             "in_chars": len(text),
@@ -839,6 +937,7 @@ class Handler(BaseHTTPRequestHandler):
             "parts": len(parts),
             "tokens": llm.usage.total_tokens,
             "model": cfg.model,
+            "at": item["at"],
         }
 
     def _upload(self, query: dict) -> dict:

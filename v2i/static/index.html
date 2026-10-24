@@ -214,9 +214,25 @@
         <span class="hint" id="rwMeta"></span>
       </div>
       <div class="rw-actions">
+        <div class="seg-switch rw-view" id="rwView">
+          <button class="seg active" data-view="out" type="button">改写结果</button>
+          <button class="seg" data-view="diff" type="button">差异对比</button>
+          <button class="seg" data-view="sbs" type="button">并排对比</button>
+        </div>
         <button class="ghost" id="rwCopy" type="button">复制全文</button>
+        <span class="hint" id="rwDiffStats"></span>
       </div>
       <article class="doc rw-out" id="rwOut"></article>
+      <div class="diff" id="rwDiff" hidden></div>
+      <div class="diff-sbs" id="rwSbs" hidden></div>
+    </section>
+
+    <section class="card" id="rwHistoryCard">
+      <div class="card-head">
+        <h2>改写历史</h2>
+        <span class="hint" id="rwHistoryCount">最近 40 条</span>
+      </div>
+      <ul class="file-list" id="rwHistory"></ul>
     </section>
   </div>
 </section>

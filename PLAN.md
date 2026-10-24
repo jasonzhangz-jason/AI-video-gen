@@ -471,3 +471,26 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 - `GET /api/settings` 的 `effective` 扩展为：LLM 四项 + `asr{model,device_setting,device,compute_setting,compute,language}` + `chunk_chars/copy_style/proxy/project/runs_dir`；「当前生效」区据此渲染，显示的是**解析后的真实值**而不是原始配置。
 - 保存语义：空字符串=删除该键并回退默认，所以"跟随默认"选项可用。
 - 实测热加载：一次 POST 同时改 key/model/asr/language/chunk/copy_style → 未重启 `/api/status` 立刻显示 `asr.model=base, device=cpu, compute=int8`，`effective.chunk_chars=900`、`copy_style=script`、`ready=True`；清 key 后 `ready=False`。
+
+
+### 10.18 文案改写后的差异对比（2026-10-25 追加）
+
+- 新增 `POST /api/diff{a,b}`：句子级 `SequenceMatcher` 出块（equal/delete/insert/replace），对 replace 块再做**逐字 diff**（`_inline_diff`，块长 ≤4000 字），前端渲染成"整段里只有几个词飘红/飘绿"。
+- 统计口径单独算：相似度与增删字数都走**逐字** `SequenceMatcher`（≤12000 字），否则"每句都改一点"会被句级 matcher 判成相似度 0——第一版就是这个坑，实测 29% 改成 94% 才是真实感受。
+- UI：结果卡里加「改写结果 / 差异对比」分段切换，切到对比时按需请求并缓存（`state.diff`），重新改写会清缓存；右侧显示统计。
+- 验证：mock 实例跑通整条链路（输入 115 字 → 输出 104 字，diff 标出 `嗯、` `今天呢` `就是说，` `然后第二点，` 四处删除，相似度 94% · 删 12 字 / 增 1 字）；真实实例 API 校验 `ratio=0.391, removed=21, added=7`。
+
+### 10.19 并排对比（2026-10-25 追加）
+
+- 结果卡的三段开关：`改写结果 / 差异对比 / 并排对比`；后两者共用同一份 `/api/diff` 结果（`state.diff` 缓存），切来切去不再请求。
+- 并排用**单容器 CSS Grid**（`grid-template-columns: 1fr 1fr`，每个 op 输出左右两个 cell），行高由 Grid 自动对齐，天然同步滚动；不用两个独立滚动面板，省掉 JS 同步逻辑。
+- 逐字级 diff 在左右两栏各渲染一半：左栏只保留 equal + delete，右栏只保留 equal + insert，所以"改了哪几个字"在两栏里位置一一对应。
+- 实测：1400px 下两栏各 456px，4 个 cell、4 处 `<del>` / 1 处 `<ins>`，横向无溢出；窄屏降字号与内边距，仍保持两栏对齐。
+
+### 10.20 文案改写历史（2026-10-25 追加）
+
+- 新增 `v2i/history.py`：`.runtime/rewrite_history.json` 存最近 60 条，字段含 `input/output` 全文（可再编辑）、风格、模型、token、字数、时间；写入用临时文件原子替换，进程内加锁（HTTP 是多线程）。
+- `/api/rewrite` 成功后自动落一条；新增 `GET /api/rewrite/history`（列表，轻量摘要）、`GET /api/rewrite/history?id=`（全文）、`POST /api/rewrite/history/delete`、`POST /api/rewrite/history/clear`。
+- GUI「文案改写」页底部加「改写历史」卡片：`时间 · 风格 · 入→出 字数` + 输出摘要，右侧「查看 / 再编辑 / 删除」；查看会把结果回放到结果区（含并排/差异可用），再编辑把原始输入放回输入框。
+- 实测（真实 DeepSeek，非 mock）：210 字 → 207 字 / 532 tokens，历史列表出现 1 条，点「查看」结果区显示 `历史 · 10-25 00:44:23 · 210 字 → 207 字 · deepseek-chat`，正文 3 段。
+
