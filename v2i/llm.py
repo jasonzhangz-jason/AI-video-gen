@@ -95,6 +95,7 @@ class LLM:
         return self.cfg.base_url.rstrip("/") + "/chat/completions"
 
     def chat(self, messages: list[dict], json_mode: bool = False,
+             stage: str = "",
              model: str | None = None, max_tokens: int | None = None,
              temperature: float | None = None) -> str:
         payload = {
@@ -108,6 +109,7 @@ class LLM:
             payload["response_format"] = {"type": "json_object"}
 
         last_error = None
+        started = time.time()
         for attempt in range(3):
             try:
                 resp = self.session.post(self.endpoint, json=payload, timeout=(15, 300))
@@ -115,6 +117,7 @@ class LLM:
                     data = resp.json()
                     usage = data.get("usage") or {}
                     self.usage.add(usage.get("prompt_tokens"), usage.get("completion_tokens"))
+                    self._record(usage, stage, time.time() - started)
                     choices = data.get("choices") or []
                     if not choices:
                         raise LLMError(f"响应没有 choices：{data}")
@@ -139,7 +142,26 @@ class LLM:
             except LLMError:
                 raise
         self.usage.failures += 1
+        self._record({}, stage, time.time() - started, ok=False)
         raise LLMError(f"调用失败（已重试 3 次）：{last_error}")
+
+    def _record(self, usage: dict, stage: str, seconds: float, ok: bool = True) -> None:
+        if not getattr(self, "log_calls", True):
+            return
+        try:
+            from . import usage as usage_mod
+
+            usage_mod.log_call(
+                task=getattr(self, "task", "") or "",
+                stage=stage or getattr(self, "stage", "") or "chat",
+                model=getattr(self.cfg, "model", "") or "",
+                prompt_tokens=int(usage.get("prompt_tokens") or 0),
+                completion_tokens=int(usage.get("completion_tokens") or 0),
+                seconds=seconds,
+                ok=ok,
+            )
+        except Exception:  # 记账失败不能影响主流程
+            pass
 
     def chat_json(self, messages: list[dict], **kwargs) -> dict:
         text = self.chat(messages, json_mode=True, **kwargs)

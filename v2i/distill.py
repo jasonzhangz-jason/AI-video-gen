@@ -135,7 +135,7 @@ def _polish_copy(llm, meta: dict, paras: list[str], prompt: str = "reduce_copy")
     """文案润色：短稿一次过；长稿按 9000 字分片，保序拼接。"""
     text = "\n\n".join(paras)
     if len(text) <= 12000:
-        return llm.chat_json(_copy_messages(meta, paras, prompt=prompt))
+        return llm.chat_json(_copy_messages(meta, paras, prompt=prompt), stage="copy")
 
     parts: list[str] = []
     buffer = ""
@@ -149,7 +149,8 @@ def _polish_copy(llm, meta: dict, paras: list[str], prompt: str = "reduce_copy")
 
     merged: dict = {"title": "", "paras": [], "cuts": [], "keep_as_is": []}
     for index, part in enumerate(parts, 1):
-        data = llm.chat_json(_copy_messages(meta, [part], f"第 {index}/{len(parts)} 段", prompt=prompt))
+        data = llm.chat_json(_copy_messages(meta, [part], f"第 {index}/{len(parts)} 段", prompt=prompt),
+                             stage=f"copy {index}/{len(parts)}")
         merged["title"] = merged["title"] or (data.get("title") or "")
         merged["paras"].extend(str(p).strip() for p in (data.get("paras") or []) if str(p).strip())
         merged["cuts"].extend(data.get("cuts") or [])
@@ -188,6 +189,7 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
     llm_error = ""
     try:
         llm = LLM(cfg)
+        llm.task = workdir.name
     except ConfigError as exc:
         llm_error = str(exc)
         _log(f"  ! 没有可用的 LLM 配置：{exc}")
@@ -217,7 +219,7 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
         done = 0
         with ThreadPoolExecutor(max_workers=max(1, cfg.workers)) as pool:
             futures = {
-                pool.submit(llm.chat_json, _map_messages(meta, chunk)): (idx, chunk)
+                pool.submit(llm.chat_json, _map_messages(meta, chunk), stage=f"map #{idx + 1}"): (idx, chunk)
                 for idx, chunk in todo
             }
             for future in as_completed(futures):
@@ -254,7 +256,7 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
                 skipped.append("summary")
                 continue
             else:
-                data = llm.chat_json(_reduce_messages("summary", meta, digest))
+                data = llm.chat_json(_reduce_messages("summary", meta, digest), stage="reduce:summary")
                 write_json(target, data)
             md = render.summary_md(meta, data, cfg, transcript)
             path = out_dir / "summary.md"
@@ -272,7 +274,7 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
                 skipped.append("points")
                 continue
             else:
-                data = llm.chat_json(_reduce_messages("points", meta, digest))
+                data = llm.chat_json(_reduce_messages("points", meta, digest), stage="reduce:points")
                 write_json(target, data)
             md = render.points_md(meta, data, cfg, transcript)
             path = out_dir / "points.md"
@@ -293,7 +295,7 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
                 skipped.append("article")
                 continue
             else:
-                body = llm.chat(_reduce_messages("article", meta, digest))
+                body = llm.chat(_reduce_messages("article", meta, digest), stage="reduce:article")
                 body = re.sub(r"^```(?:markdown|md)?\s*|\s*```$", "", body.strip())
             md = render.article_md(meta, body, cfg, transcript)
             write_text(path, md)

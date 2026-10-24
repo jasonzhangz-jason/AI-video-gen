@@ -548,6 +548,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(_cookie_status())
             if route == "/api/settings":
                 return self._json(self._settings_view())
+            if route == "/api/usage":
+                from . import usage as usage_mod
+
+                return self._json(usage_mod.summarize())
             if route == "/api/rewrite/history":
                 from . import history as history_mod
 
@@ -964,7 +968,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             cfg = Config.from_env()
             llm = LLM(cfg)
-            reply = llm.chat([{"role": "user", "content": "只回复：pong"}], max_tokens=8)
+            llm.task = "（系统配置 · 连通性测试）"
+            reply = llm.chat([{"role": "user", "content": "只回复：pong"}], max_tokens=8, stage="ping")
             return {"ok": True, "reply": (reply or "").strip()[:40],
                     "model": cfg.model, "base_url": cfg.base_url}
         except Exception as exc:  # noqa: BLE001
@@ -984,6 +989,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             cfg = Config.from_env(model=body.get("model") or None)
             llm = LLM(cfg)
+            llm.task = "（文案改写）"
         except ConfigError as exc:
             return {"error": str(exc)}
         system = load_prompt(prompt_name)
@@ -995,7 +1001,7 @@ class Handler(BaseHTTPRequestHandler):
                 {"role": "system", "content": system},
                 {"role": "user", "content": f"原文{label}：\n{part}\n\n直接输出改写后的正文。"},
             ]
-            pieces.append(llm.chat(messages, temperature=0.4).strip())
+            pieces.append(llm.chat(messages, temperature=0.4, stage=f"rewrite {index}/{len(parts)}").strip())
         result = "\n\n".join(p for p in pieces if p)
         print(f"  文案改写：{len(text)} 字 → {len(result)} 字，{llm.usage.total_tokens} tokens", flush=True)
         from . import history as history_mod

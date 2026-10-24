@@ -798,11 +798,11 @@
   // ---------------------------------------------------------------- 页面切换 / 文案改写
 
   function switchPage(name) {
-    const page = ["new", "history", "rewrite", "settings"].includes(name) ? name : "new";
+    const page = ["new", "history", "usage", "rewrite", "settings"].includes(name) ? name : "new";
     document.querySelectorAll(".nav-item").forEach((b) => {
       b.classList.toggle("active", b.dataset.page === page);
     });
-    [["new", "#page-new"], ["history", "#page-history"], ["rewrite", "#page-rewrite"], ["settings", "#page-settings"]].forEach(([key, sel]) => {
+    [["new", "#page-new"], ["history", "#page-history"], ["usage", "#page-usage"], ["rewrite", "#page-rewrite"], ["settings", "#page-settings"]].forEach(([key, sel]) => {
       const el = $(sel);
       if (el) el.hidden = key !== page;
     });
@@ -823,11 +823,86 @@
     } else {
       history.replaceState(null, "", `#page=${page}`);
     }
+    if (page === "usage") loadUsage();
     if (page === "rewrite") {
       fillImportOptions();
       loadRewriteHistory();
     }
     if (page === "settings") loadSettings();
+  }
+
+  function fmtNum(n) {
+    return Number(n || 0).toLocaleString("en-US");
+  }
+
+  function fmtMoney(v) {
+    if (v === null || v === undefined) return "—";
+    const n = Number(v);
+    if (!Number.isFinite(n)) return "—";
+    if (n === 0) return "¥0";
+    if (n < 1) return "¥" + n.toFixed(4);
+    return "¥" + n.toFixed(2);
+  }
+
+  async function loadUsage() {
+    const rows = $("#usageRows");
+    if (!rows) return;
+    rows.innerHTML = '<p class="usage-empty">读取中…</p>';
+    try {
+      const d = await api("/api/usage");
+      const t = d.totals || {};
+      $("#usageTotals").innerHTML = [
+        ["任务数", fmtNum(t.tasks)],
+        ["调用次数", fmtNum(t.calls)],
+        ["输入 tokens", fmtNum(t.prompt_tokens)],
+        ["输出 tokens", fmtNum(t.completion_tokens)],
+        ["估算费用", fmtMoney(t.cost)],
+      ].map(([k, v]) => `<div class="usage-tile"><small>${k}</small><strong>${v}</strong></div>`).join("");
+
+      const tasks = d.tasks || [];
+      if (!tasks.length) {
+        rows.innerHTML = '<p class="usage-empty">还没有调用记录。跑一个任务、或点一次「测试大模型连接」就会记上一笔。</p>';
+        return;
+      }
+      rows.innerHTML = tasks.map((task, idx) => {
+        const detail = (task.detail || []).map((row) => `
+          <tr>
+            <td>${escapeHtml(String(row.ts || "").replace("T", " ").slice(0, 19))}</td>
+            <td>${escapeHtml(row.stage || "chat")}</td>
+            <td>${escapeHtml(row.model || "")}</td>
+            <td class="num">${fmtNum(row.prompt_tokens)}</td>
+            <td class="num">${fmtNum(row.completion_tokens)}</td>
+            <td class="num">${fmtMoney(row.cost)}</td>
+          </tr>`).join("");
+        return `
+          <div class="usage-row" data-idx="${idx}">
+            <span class="u-name" title="${escapeHtml(task.task)}">${escapeHtml(task.task)}</span>
+            <span class="u-num">${fmtNum(task.calls)}</span>
+            <span class="u-num">${fmtNum(task.prompt_tokens)}</span>
+            <span class="u-num">${fmtNum(task.completion_tokens)}</span>
+            <span class="u-num u-cost">${task.priced ? fmtMoney(task.cost) : "—"}</span>
+            <span class="u-caret">▾</span>
+          </div>
+          <div class="usage-detail" data-detail="${idx}" hidden>
+            <table>
+              <thead><tr><th>时间</th><th>阶段</th><th>模型</th><th>输入</th><th>输出</th><th>费用</th></tr></thead>
+              <tbody>${detail}</tbody>
+            </table>
+            ${task.fallback ? '<p class="hint">这条任务早于逐次记账，只能看到汇总。</p>' : ""}
+          </div>`;
+      }).join("");
+
+      rows.querySelectorAll(".usage-row").forEach((row) => {
+        row.addEventListener("click", () => {
+          const box = rows.querySelector(`[data-detail="${row.dataset.idx}"]`);
+          if (!box) return;
+          box.hidden = !box.hidden;
+          row.querySelector(".u-caret").textContent = box.hidden ? "▾" : "▴";
+        });
+      });
+    } catch (err) {
+      rows.innerHTML = `<p class="usage-empty">读取失败：${escapeHtml(err.message)}</p>`;
+    }
   }
 
   function toggleHowto(force) {
@@ -1471,6 +1546,7 @@
   });
   $("#histRefresh").addEventListener("click", async () => { await loadRuns(); renderHistoryPage(); });
   $("#howtoBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleHowto(); });
+  $("#usageRefresh").addEventListener("click", loadUsage);
   document.addEventListener("click", (e) => {
     const pop = $("#howtoPop");
     if (!pop || pop.hidden) return;

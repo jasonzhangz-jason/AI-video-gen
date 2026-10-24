@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
@@ -25,6 +25,7 @@
     <button class="nav-item active" data-page="new" type="button"><span class="nav-ico">＋</span>新建任务</button>
     <button class="nav-item" data-page="history" type="button"><span class="nav-ico">🕘</span>历史任务</button>
     <button class="nav-item" data-page="rewrite" type="button"><span class="nav-ico">✎</span>文案改写</button>
+    <button class="nav-item" data-page="usage" type="button"><span class="nav-ico">◔</span>模型调用</button>
     <button class="nav-item" data-page="settings" type="button"><span class="nav-ico">⚙</span>系统配置</button>
     <div class="nav-foot" id="navFoot">v0.1.0</div>
   </nav>
@@ -199,6 +200,26 @@
       <div class="pager" id="histPager"></div>
     </section>
     <div id="histDetailSlot"></div>
+  </div>
+</section>
+
+<section class="page" id="page-usage" hidden>
+  <div class="rewrite-wrap">
+    <section class="card">
+      <div class="card-head">
+        <h2>模型调用</h2>
+        <span class="hint">按任务统计 · 费用为估算（元）</span>
+        <button class="ghost" id="usageRefresh" type="button">刷新</button>
+      </div>
+      <div class="usage-totals" id="usageTotals"></div>
+      <div class="usage-table">
+        <div class="usage-head">
+          <span>任务</span><span>调用</span><span>输入</span><span>输出</span><span>费用</span><span></span>
+        </div>
+        <div id="usageRows"></div>
+      </div>
+      <p class="hint">点任务行展开逐次调用明细；「提炼（汇总）」说明这条任务产生于逐次记账上线之前。</p>
+    </section>
   </div>
 </section>
 
