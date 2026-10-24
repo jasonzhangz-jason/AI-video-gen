@@ -306,6 +306,53 @@
     return (n / 1048576).toFixed(1) + " MB";
   }
 
+  const FILE_TIPS = [
+    [/^out\/summary\.md$/, "摘要卡：3–5 条核心结论，每条带可回溯的时间码"],
+    [/^out\/points\.md$/, "观点清单：按主题归并的要点，适合快速扫读或做提纲"],
+    [/^out\/article\.md$/, "长文：成篇的公众号风格文章，可直接改改就发"],
+    [/^out\/copy\.md$/, "文案：去掉口水词、重新分段的成稿（带润色风格标注）"],
+    [/^out\/copy\.txt$/, "文案纯文本：没有 Markdown 标记，方便直接粘贴到发布后台"],
+    [/^out\/digest\.json$/, "结构化数据：要点、引用、统计，给二次开发或自动化用"],
+    [/^transcript\.md$/, "逐字稿：带时间码的全文，最原始的文本资产"],
+    [/^transcript\.srt$/, "字幕文件：标准 SRT，可导入剪映 / Premiere / YouTube"],
+    [/^transcript\.json$/, "唯一真源：段级文本 + 时间戳，后续所有产物都由它生成"],
+    [/^meta\.json$/, "视频元数据：标题、作者、时长、链接、封面等原始信息"],
+    [/^manifest\.json$/, "运行记录：每个阶段的做法、耗时、token 用量"],
+    [/^chunks\.json$/, "分块结果：长稿为了提炼而切的分段，带句子边界"],
+    [/^source\.json$/, "取词来源：这次用的是字幕还是音频/视频转写"],
+    [/^source\.(mp4|webm|mkv|mov|m4v)$/, "原视频：勾选「保留原视频」才会下载，可播放、可下载"],
+    [/^source\.[a-z0-9]+$/, "原始音轨：转写用的音频文件"],
+    [/^notes\//, "分块要点：每个分块的中间结果，排错时看它"],
+    [/^logs?\//, "运行日志：命令行输出的完整记录"],
+  ];
+
+  function fileTip(path) {
+    for (const [re, text] of FILE_TIPS) {
+      if (re.test(path)) return text;
+    }
+    return "任务产物文件";
+  }
+
+  function showTip(el, text) {
+    const tip = $("#tip");
+    if (!tip) return;
+    tip.textContent = text;
+    tip.hidden = false;
+    const r = el.getBoundingClientRect();
+    const tw = tip.offsetWidth;
+    let left = r.left + 8;
+    if (left + tw > window.innerWidth - 12) left = window.innerWidth - tw - 12;
+    let top = r.bottom + 8;
+    if (top + tip.offsetHeight > window.innerHeight - 12) top = r.top - tip.offsetHeight - 8;
+    tip.style.left = Math.max(8, left) + "px";
+    tip.style.top = Math.max(8, top) + "px";
+  }
+
+  function hideTip() {
+    const tip = $("#tip");
+    if (tip) tip.hidden = true;
+  }
+
   async function renderFiles(dir) {
     const doc = $("#doc");
     doc.innerHTML = `<p class="empty">读取文件列表…</p>`;
@@ -319,7 +366,7 @@
         }
         const badge = { text: "TXT", image: "IMG", audio: "AUDIO", video: "VIDEO", binary: "BIN", dir: "DIR" }[f.kind] || "FILE";
         const clickable = f.kind !== "dir" && f.kind !== "binary";
-        return `<li class="file-row${clickable ? " clickable" : ""}" data-path="${escapeHtml(f.path)}">
+        return `<li class="file-row${clickable ? " clickable" : ""}" data-path="${escapeHtml(f.path)}" data-tip="${escapeHtml(fileTip(f.path))}">
           <span class="fname"><span class="fkind k-${escapeHtml(f.kind)}">${badge}</span>${escapeHtml(f.path)}</span>
           <span class="fmeta">${escapeHtml(size)}${f.mtime ? " · " + escapeHtml(f.mtime) : ""}</span>
           <span class="factions">${actions.join("")}</span>
@@ -566,7 +613,7 @@
 
     const modes = Array.from(document.querySelectorAll('input[name="mode"]:checked')).map((el) => el.value);
     if (!modes.length) {
-      alert("至少选一种产物：摘要 / 观点 / 长文");
+      alert("至少选一种产物：摘要卡 / 观点清单 / 长文 / 文案");
       return;
     }
     const isFile = state.src === "file";
@@ -676,6 +723,170 @@
     }
   }
 
+  function grabMsg(text, kind, hint) {
+    const box = $("#cookieGrabMsg");
+    if (!box) return;
+    box.className = "grab-msg" + (kind ? " " + kind : "");
+    box.innerHTML = escapeHtml(text) + (hint ? `<span class="hint">${escapeHtml(hint)}</span>` : "");
+  }
+
+  async function grabCookies(browser) {
+    const buttons = document.querySelectorAll(".grab-b");
+    buttons.forEach((b) => { b.disabled = true; });
+    $("#cookieGrabActions").hidden = true;
+    grabMsg(`正在从 ${browser} 读取…`, "");
+    try {
+      const r = await api("/api/cookies/browser", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ browser }),
+      });
+      if (r.error) throw new Error(r.error);
+      const domains = (r.domains || []).join("、");
+      grabMsg(
+        `从 ${r.browser} 读到 ${r.count} 条 cookie，覆盖 ${r.domain_count} 个域名 · 勾选要导入的`,
+        "ok",
+        domains ? `主要域名：${domains}` : ""
+      );
+      renderCookieChoices(r.items || []);
+      $("#cookieGrabActions").hidden = false;
+    } catch (err) {
+      grabMsg(err.message, "err", "读不到就换一个浏览器，或用「上传 cookies.txt」从扩展导出。");
+    } finally {
+      buttons.forEach((b) => { b.disabled = false; });
+    }
+  }
+
+  function renderCookieChoices(items) {
+    const list = $("#cookieGrabList");
+    if (!list) return;
+    list.hidden = false;
+    $("#cookieFilter").value = "";
+    $("#cookieAll").checked = true;
+    state.cookieItems = items.slice();
+    state.cookieSelected = new Set(items.map((c) => c.i));
+    state.cookieSort = { key: "", dir: 1 };
+    paintCookieRows();
+  }
+
+  function paintCookieRows() {
+    const box = $("#cookieRows");
+    if (!box) return;
+    const items = (state.cookieItems || []).slice();
+    const sort = state.cookieSort || { key: "", dir: 1 };
+    if (sort.key) {
+      items.sort((a, b) => {
+        const av = String(a[sort.key] || "");
+        const bv = String(b[sort.key] || "");
+        if (sort.key === "expires") {
+          // "会话" 排最后
+          const as = av === "会话" ? "99999999" : av;
+          const bs = bv === "会话" ? "99999999" : bv;
+          return as.localeCompare(bs) * sort.dir;
+        }
+        const cmp = av.localeCompare(bv, "zh-CN");
+        return (cmp === 0 ? a.i - b.i : cmp) * sort.dir;
+      });
+    }
+    const selected = state.cookieSelected || new Set();
+    box.innerHTML = items.map((c) => `
+      <label class="ck-row" data-search="${escapeHtml((c.domain + " " + c.name).toLowerCase())}">
+        <input type="checkbox" data-i="${c.i}" ${selected.has(c.i) ? "checked" : ""} />
+        <span class="ck-domain" title="${escapeHtml(c.domain + (c.path && c.path !== "/" ? c.path : ""))}">${escapeHtml(c.domain)}</span>
+        <span class="ck-name" title="${escapeHtml(c.name + (c.http_only ? "（HttpOnly）" : "") + (c.secure ? "（Secure）" : ""))}">${escapeHtml(c.name)}${c.http_only ? " 🔒" : ""}</span>
+        <span class="ck-value" title="${escapeHtml(c.value || "")}">${escapeHtml(c.value || "")}</span>
+        <span class="ck-exp" title="${escapeHtml(c.expires || "")}">${escapeHtml(c.expires || "")}</span>
+      </label>`).join("");
+    box.querySelectorAll("input[data-i]").forEach((el) => {
+      el.addEventListener("change", () => {
+        const idx = Number(el.dataset.i);
+        if (el.checked) selected.add(idx);
+        else selected.delete(idx);
+        state.cookieSelected = selected;
+        updateCookieCount();
+      });
+    });
+    document.querySelectorAll("#cookieCols .ck-col").forEach((btn) => {
+      const on = btn.dataset.sort === sort.key;
+      btn.classList.toggle("on", on);
+      const caret = btn.querySelector(".ck-caret");
+      if (caret) caret.textContent = on ? (sort.dir > 0 ? "▲" : "▼") : "";
+    });
+    filterCookieRows($("#cookieFilter").value);
+  }
+
+  function sortCookies(key) {
+    const sort = state.cookieSort || { key: "", dir: 1 };
+    if (sort.key === key) sort.dir = -sort.dir;
+    else {
+      sort.key = key;
+      sort.dir = 1;
+    }
+    state.cookieSort = sort;
+    paintCookieRows();
+  }
+
+  function visibleCookieBoxes() {
+    return Array.from(document.querySelectorAll("#cookieRows input[data-i]"))
+      .filter((el) => !el.closest(".ck-row").hidden);
+  }
+
+  function updateCookieCount() {
+    const items = state.cookieItems || [];
+    const selected = state.cookieSelected || new Set();
+    $("#cookieCount").textContent = `已选 ${selected.size} / ${items.length}`;
+    const visible = visibleCookieBoxes();
+    const allVisibleChecked = visible.length > 0 && visible.every((el) => el.checked);
+    const allBox = $("#cookieAll");
+    if (allBox) allBox.checked = allVisibleChecked;
+    $("#cookieGrabActions").hidden = selected.size === 0;
+  }
+
+  function filterCookieRows(query) {
+    const q = (query || "").trim().toLowerCase();
+    document.querySelectorAll("#cookieRows .ck-row").forEach((row) => {
+      row.hidden = q ? !(row.dataset.search || "").includes(q) : false;
+    });
+    updateCookieCount();
+  }
+
+  async function confirmCookies() {
+    const btn = $("#cookieGrabUse");
+    btn.disabled = true;
+    try {
+      const keep = Array.from(state.cookieSelected || []);
+      if (!keep.length) {
+        grabMsg("一条都没勾选，先在列表里选几条。", "err");
+        return;
+      }
+      const r = await api("/api/cookies/browser/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keep }),
+      });
+      if (r.error) throw new Error(r.error);
+      const st = r.status || {};
+      grabMsg(`已导入 ${r.imported || 0} 条 cookie，当前共 ${st.count || 0} 条`, "ok", "下一条任务就会用这份登录态。");
+      $("#cookieGrabActions").hidden = true;
+      $("#cookieGrabList").hidden = true;
+      await loadCookies();
+    } catch (err) {
+      grabMsg(err.message, "err");
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function dropCookies() {
+    await api("/api/cookies/browser/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }).catch(() => {});
+    $("#cookieGrabActions").hidden = true;
+    grabMsg("已放弃这次读取，现有配置没变。", "");
+  }
+
   function uploadCookies(file) {
     const el = $("#cookieStatus");
     el.className = "cookie-status";
@@ -782,14 +993,14 @@
       out.innerHTML = "抖音：<code>https://www.douyin.com/video/&lt;id&gt;</code> 或 <code>v.douyin.com</code> 短链（<b>/shipin/ 不支持</b>）；小红书：<code>xhslink.com</code> 短链或笔记页。";
       return;
     }
-    // cookies 类
-    const adv = document.querySelector(".advanced");
+    // cookies 类：字段在高级选项里，先展开再定位
+    const adv = document.querySelector("details.advanced");
     if (adv) adv.open = true;
-    const row = document.querySelector(".cookie-row");
-    if (row) {
-      row.scrollIntoView({ block: "center", behavior: "smooth" });
-      row.classList.add("flash");
-      setTimeout(() => row.classList.remove("flash"), 1600);
+    const field = document.querySelector(".cookie-field");
+    if (field) {
+      field.scrollIntoView({ block: "center", behavior: "smooth" });
+      field.classList.add("flash");
+      setTimeout(() => field.classList.remove("flash"), 1600);
     }
     const input = $("#cookieFile");
     if (input) input.click();
@@ -1500,18 +1711,20 @@
   }
 
   // ---------------------------------------------------------------- 启动
+  document.querySelectorAll('input[name="mode"]').forEach((el) => {
+    el.addEventListener("change", () => {
+      const any = document.querySelectorAll('input[name="mode"]:checked').length;
+      const row = document.getElementById("modes");
+      if (row) row.classList.toggle("no-mode", !any);
+    });
+  });
+
 
   $("#runForm").addEventListener("submit", startJob);
   const refreshRuns = $("#refreshRuns");
   if (refreshRuns) refreshRuns.addEventListener("click", loadRuns);
   document.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") $("#runForm").requestSubmit();
-  });
-  document.querySelectorAll(".modes input").forEach((el) => {
-    el.addEventListener("change", () => {
-      const any = document.querySelectorAll('input[name="mode"]:checked').length;
-      if (!any) el.checked = true;
-    });
   });
 
   document.querySelectorAll("#srcSwitch .seg").forEach((el) => {
@@ -1559,6 +1772,41 @@
   });
   $("#probeBtn").addEventListener("click", probeUrl);
   $("#cookiePick").addEventListener("click", () => $("#cookieFile").click());
+  document.addEventListener("mouseover", (e) => {
+    const el = e.target.closest("[data-tip]");
+    if (el) showTip(el, el.dataset.tip);
+  });
+  document.addEventListener("mouseout", (e) => {
+    if (e.target.closest("[data-tip]")) hideTip();
+  });
+  window.addEventListener("scroll", hideTip, true);
+
+  $("#cookieGrab").addEventListener("click", () => {
+    const panel = $("#cookieGrabPanel");
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) grabMsg("选一个浏览器开始读取。", "");
+  });
+  $("#cookieGrabClose").addEventListener("click", () => { $("#cookieGrabPanel").hidden = true; });
+  document.querySelectorAll(".grab-b").forEach((b) => {
+    b.addEventListener("click", () => grabCookies(b.dataset.browser));
+  });
+  $("#cookieGrabUse").addEventListener("click", confirmCookies);
+  $("#cookieAll").addEventListener("change", (e) => {
+    const selected = state.cookieSelected || new Set();
+    visibleCookieBoxes().forEach((el) => {
+      el.checked = e.target.checked;
+      const idx = Number(el.dataset.i);
+      if (e.target.checked) selected.add(idx);
+      else selected.delete(idx);
+    });
+    state.cookieSelected = selected;
+    updateCookieCount();
+  });
+  $("#cookieFilter").addEventListener("input", (e) => filterCookieRows(e.target.value));
+  document.querySelectorAll("#cookieCols .ck-col").forEach((btn) => {
+    btn.addEventListener("click", () => sortCookies(btn.dataset.sort));
+  });
+  $("#cookieGrabDrop").addEventListener("click", dropCookies);
   $("#cookieFile").addEventListener("change", (e) => { if (e.target.files[0]) uploadCookies(e.target.files[0]); e.target.value = ""; });
   $("#cookieClear").addEventListener("click", () => { if (confirm("清除已上传的 cookies？")) clearCookies(); });
   $("#platform").addEventListener("change", renderPlatformNote);

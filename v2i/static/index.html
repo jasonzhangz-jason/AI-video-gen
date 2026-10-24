@@ -82,7 +82,8 @@
           <label><input type="checkbox" name="mode" value="article" checked /><span>长文</span></label>
           <label><input type="checkbox" name="mode" value="copy" checked /><span>文案</span></label>
           <span class="modes-sep" aria-hidden="true"></span>
-          <label class="opt"><input type="checkbox" id="keepVideo" /><span>保留原视频（界面里可播放）</span></label>
+          <label class="opt"><input type="checkbox" id="preferSubs" checked /><span>字幕优先（有字幕就不转写）</span></label>
+          <label class="opt"><input type="checkbox" id="keepVideo" checked /><span>保留原视频（界面里可播放）</span></label>
           <label class="opt"><input type="checkbox" id="force" /><span>忽略缓存，全部重跑</span></label>
         </div>
 
@@ -91,22 +92,20 @@
           <span class="default-hint" id="defaultHint">默认：字幕优先 · small</span>
         </div>
 
-        <p class="tip">有原生字幕的视频会直接取字幕，跳过转写（通常快 10 倍）；没有字幕才下载音频用 faster-whisper 转写。</p>
-
         <details class="advanced">
           <summary>高级选项</summary>
           <div class="adv-grid">
-            <label>ASR 模型
-              <select id="asrModel">
-                <option value="tiny">tiny · 最快</option>
-                <option value="base">base</option>
-                <option value="small" selected>small · 推荐</option>
-                <option value="medium">medium · 更准更慢</option>
-                <option value="large-v3">large-v3 · 需 GPU</option>
-                <option value="turbo">turbo</option>
-                <option value="">跟随 .env 配置</option>
-              </select>
-            </label>
+        <label class="inline-field">ASR 模型
+          <select id="asrModel">
+            <option value="tiny">tiny · 最快</option>
+            <option value="base">base</option>
+            <option value="small" selected>small · 推荐</option>
+            <option value="medium">medium · 更准更慢</option>
+            <option value="large-v3">large-v3 · 需 GPU</option>
+            <option value="turbo">turbo</option>
+            <option value="">跟随 .env 配置</option>
+          </select>
+        </label>
             <label>语言
               <select id="language">
                 <option value="">自动检测</option>
@@ -122,13 +121,6 @@
                 <option value="script">口播稿 · 改写成能念的稿子</option>
               </select>
             </label>
-            <div class="cookie-row">
-              <span class="inline-label">登录态 cookies</span>
-              <span class="cookie-status" id="cookieStatus">读取中…</span>
-              <button class="ghost" id="cookiePick" type="button">上传 cookies.txt</button>
-              <button class="ghost" id="cookieClear" type="button">清除</button>
-              <input type="file" id="cookieFile" accept=".txt" hidden />
-            </div>
             <label>浏览器 Cookies
               <select id="cookiesFrom">
                 <option value="">不使用（cookies.txt 走 .env）</option>
@@ -143,7 +135,47 @@
             <label>LLM 模型（可选）
               <input id="model" type="text" placeholder="留空用 .env 里的配置" />
             </label>
-            <label class="check"><input type="checkbox" id="preferSubs" checked /><span>字幕优先（有字幕就不转写）</span></label>
+<div class="cookie-field">
+          <span>登录态 cookies</span>
+          <div class="cookie-box">
+            <span class="cookie-status" id="cookieStatus">读取中…</span>
+            <span class="cookie-acts">
+              <button class="link-btn" id="cookieGrab" type="button">一键获取</button>
+              <button class="link-btn" id="cookiePick" type="button">上传</button>
+              <button class="link-btn" id="cookieClear" type="button">清除</button>
+            </span>
+          </div>
+          <input type="file" id="cookieFile" accept=".txt" hidden />
+        </div>
+        <div class="cookie-grab" id="cookieGrabPanel" hidden>
+          <div class="grab-head">从哪个浏览器读取登录态？<span class="hint">读到的 cookies 先给你确认，不会直接覆盖</span></div>
+          <div class="grab-browsers">
+            <button class="ghost grab-b" data-browser="chrome" type="button">Chrome</button>
+            <button class="ghost grab-b" data-browser="edge" type="button">Edge</button>
+            <button class="ghost grab-b" data-browser="firefox" type="button">Firefox</button>
+            <button class="ghost" id="cookieGrabClose" type="button">收起</button>
+          </div>
+          <div class="grab-msg" id="cookieGrabMsg"></div>
+          <div class="grab-list" id="cookieGrabList" hidden>
+            <div class="grab-list-head">
+              <label class="check"><input type="checkbox" id="cookieAll" checked /><span>全选</span></label>
+              <span class="grab-count" id="cookieCount"></span>
+              <input id="cookieFilter" type="search" placeholder="按域名 / 名称过滤…" autocomplete="off" />
+            </div>
+            <div class="grab-cols" id="cookieCols">
+              <span></span>
+              <button class="ck-col" data-sort="domain" type="button">域名<span class="ck-caret"></span></button>
+              <button class="ck-col" data-sort="name" type="button">名称<span class="ck-caret"></span></button>
+              <button class="ck-col" data-sort="value" type="button">值<span class="ck-caret"></span></button>
+              <button class="ck-col" data-sort="expires" type="button">过期<span class="ck-caret"></span></button>
+            </div>
+            <div class="grab-list-body" id="cookieRows"></div>
+          </div>
+          <div class="grab-actions" id="cookieGrabActions" hidden>
+            <button class="primary" id="cookieGrabUse" type="button">确认使用</button>
+            <button class="ghost" id="cookieGrabDrop" type="button">不用了</button>
+          </div>
+        </div>
           </div>
         </details>
       </form>
@@ -393,5 +425,6 @@
 </footer>
 
 <script src="/static/app.js"></script>
+<div class="hover-tip" id="tip" hidden></div>
 </body>
 </html>

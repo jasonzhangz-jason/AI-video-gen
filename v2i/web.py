@@ -96,6 +96,96 @@ def _split_text(text: str, limit: int = 6000) -> list[str]:
     return parts or [text[:limit]]
 
 
+PENDING_COOKIES = DEFAULT_COOKIES.parent / "cookies.pending.txt"
+
+BROWSER_LABELS = {"chrome": "Chrome", "edge": "Edge", "firefox": "Firefox", "brave": "Brave"}
+
+BROWSER_HINTS = {
+    "chrome": "Chrome 运行时会锁住 cookie 库，先完全退出 Chrome（任务栏也要退）再试；新版 Chrome 的 App-Bound 加密仍可能拦，那就用「上传 cookies.txt」（扩展导出）。",
+    "edge": "Edge 的 DPAPI 加密在部分机器上解不开，建议用「上传 cookies.txt」（扩展导出）。",
+    "firefox": "Firefox 一般能直接读；失败可能是配置文件路径特殊，可改用「上传 cookies.txt」。",
+}
+
+
+def _cookie_row(index: int, cookie) -> dict:
+    expires = getattr(cookie, "expires", None)
+    if expires:
+        expires_text = time.strftime("%Y-%m-%d", time.localtime(expires))
+    else:
+        expires_text = "会话"
+    return {
+        "i": index,
+        "domain": cookie.domain or "",
+        "name": cookie.name or "",
+        "value": cookie.value or "",
+        "path": cookie.path or "/",
+        "expires": expires_text,
+        "secure": bool(cookie.secure),
+        "http_only": bool(cookie.has_nonstandard_attr("HttpOnly")),
+    }
+
+
+def _confirm_browser_cookies(keep: list[int] | None) -> dict:
+    """把 pending 里被勾选的那些 cookie 写进 cookies.txt。"""
+    from http.cookiejar import MozillaCookieJar
+
+    if not PENDING_COOKIES.exists():
+        return {"error": "没有待确认的 cookies，请重新获取"}
+    jar = MozillaCookieJar(str(PENDING_COOKIES))
+    try:
+        jar.load(ignore_discard=True, ignore_expires=True)
+    except (OSError, ValueError) as exc:
+        return {"error": f"读取暂存 cookies 失败：{exc}"}
+    cookies = list(jar)
+    if keep is not None:
+        wanted = {int(i) for i in keep}
+        cookies = [c for i, c in enumerate(cookies) if i in wanted]
+    if not cookies:
+        return {"error": "一条都没勾选，没有可导入的 cookie"}
+    out = MozillaCookieJar(str(DEFAULT_COOKIES))
+    for cookie in cookies:
+        out.set_cookie(cookie)
+    DEFAULT_COOKIES.parent.mkdir(parents=True, exist_ok=True)
+    out.save(ignore_discard=True, ignore_expires=True)
+    PENDING_COOKIES.unlink(missing_ok=True)
+    return {"ok": True, "imported": len(cookies), "status": _cookie_status()}
+
+
+def _grab_browser_cookies(browser: str) -> dict:
+    """从浏览器解出 cookies，先写 pending 文件等用户确认，不直接覆盖现有配置。"""
+    from yt_dlp.cookies import extract_cookies_from_browser
+
+    browser = (browser or "").strip().lower()
+    if browser not in BROWSER_LABELS:
+        return {"error": f"不支持的浏览器：{browser}"}
+    try:
+        jar = extract_cookies_from_browser(browser)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{BROWSER_LABELS[browser]} 读取失败：{exc}",
+                "hint": BROWSER_HINTS.get(browser, "")}
+
+    cookies = list(jar)
+    if not cookies:
+        return {"error": f"{BROWSER_LABELS[browser]} 里没有找到 cookie",
+                "hint": BROWSER_HINTS.get(browser, "")}
+
+    PENDING_COOKIES.parent.mkdir(parents=True, exist_ok=True)
+    jar.save(str(PENDING_COOKIES), ignore_discard=True, ignore_expires=True)
+
+    domains: dict[str, int] = {}
+    for cookie in cookies:
+        domains[cookie.domain] = domains.get(cookie.domain, 0) + 1
+    top = sorted(domains.items(), key=lambda kv: -kv[1])[:6]
+    return {
+        "ok": True,
+        "browser": BROWSER_LABELS[browser],
+        "count": len(cookies),
+        "domains": [d for d, _ in top],
+        "domain_count": len(domains),
+        "items": [_cookie_row(i, c) for i, c in enumerate(cookies)],
+    }
+
+
 def _cookie_status() -> dict:
     path = DEFAULT_COOKIES
     if not path.exists():
@@ -642,6 +732,22 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(raw or b"{}")
         except json.JSONDecodeError:
             return self._error(400, "body 不是合法 JSON")
+
+        if parsed.path == "/api/cookies/browser":
+            return self._json(_grab_browser_cookies(str(body.get("browser") or "")))
+        if parsed.path == "/api/cookies/browser/confirm":
+            keep = body.get("keep")
+            if keep is not None and not isinstance(keep, list):
+                return self._error(400, "keep 必须是数组")
+            result = _confirm_browser_cookies(keep)
+            if result.get("error"):
+                return self._json(result)
+            print(f"  已从浏览器导入 cookies：{result.get('imported')} 条", flush=True)
+            return self._json(result)
+        if parsed.path == "/api/cookies/browser/cancel":
+            if PENDING_COOKIES.exists():
+                PENDING_COOKIES.unlink()
+            return self._json({"ok": True})
 
         try:
             if parsed.path == "/api/start":

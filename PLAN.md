@@ -560,3 +560,97 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 
 - 【模型调用】移到【系统配置】正上方，最终顺序：新建任务 / 历史任务 / 文案改写 / 模型调用 / 系统配置。只改 HTML 顺序，事件绑定按 `data-page` 走，无逻辑影响；实测导航四项文本顺序正确、模型调用页正常渲染。
 
+### 10.31 cookies 一键获取（2026-10-25 追加）
+
+- 新增 `POST /api/cookies/browser {browser}`：用 `yt_dlp.cookies.extract_cookies_from_browser` 读取本机浏览器登录态，先写 `.cookies/cookies.pending.txt` 并返回 `{count, domain_count, domains}`（不返回 cookie 值，只给数量和域名）。
+- `POST /api/cookies/browser/confirm` 才把 pending 改名为 `cookies.txt`；`/cancel` 丢弃 pending。不确认就不覆盖现有配置。
+- 失败路径带可行动提示：Chrome `Could not copy Chrome cookie database`（浏览器在跑）→ 提示完全退出 Chrome；Edge `Failed to decrypt with DPAPI` → 建议扩展导出；Firefox 实测可用（37 条 / 9 个域名）。
+- GUI：cookies 行新增「一键从浏览器获取」，展开一个虚线面板：三个浏览器按钮 + 读取结果 + 确认/不用了；面板 `grid-column: 1 / -1` 占满整行（第一版挤在网格第一列，已被截图抓出来修掉）。
+- 踩坑：这三个路由一开始插在 `do_POST` 顶部、早于 body 解析，导致 `UnboundLocalError` 直接把连接掐断（客户端只看到"连接被意外关闭"）；移到 body 解析之后再无问题。
+
+### 10.32 字幕优先并入模式行（2026-10-25 追加）
+
+- 「字幕优先（有字幕就不转写）」从高级选项移到与「保留原视频 / 忽略缓存」同一排 pill（顺序：产物四项 → 分隔线 → 字幕优先 / 保留原视频 / 忽略缓存），id 仍是 `preferSubs`，JS 无需改动。
+- 实测 1400px 下 7 个 pill 单行（35px），无横向溢出；高级选项里已无该复选框。
+
+### 10.33 「保留原视频」默认勾选（2026-10-25 追加）
+
+- 前端 `#keepVideo` 加 `checked`，新任务默认下载 mp4；CLI 的 `--keep-video` 仍保持"显式开启"（`cfg.keep_video` 默认 False），避免脚本里悄悄多下几百 MB。
+- 实测 DOM `keepVideo.checked === true`，与「字幕优先」一起显示为实线 pill。
+
+### 10.34 cookies 明细勾选导入（2026-10-25 追加）
+
+- `/api/cookies/browser` 现在返回 `items`：每条 cookie 的 `{i, domain, name, path, expires, secure, http_only}`（**不返回值**），前端渲染成可勾选列表。
+- `/api/cookies/browser/confirm` 接受 `{keep:[i,...]}`，只把勾选的写进 `cookies.txt`（`keep` 为空/缺省=全部）；实现用 `MozillaCookieJar` 重新装载 pending 再按索引过滤。
+- 列表支持：全选/取消（只影响当前过滤结果）、按域名/名称过滤、实时计数「已选 n / m」；一条不选时确认按钮隐藏并提示。
+- 踩坑：`.ck-row` 是 `label`，被 `.adv-grid label { flex-direction: column }` 覆盖成竖排（特异性 0,1,1 > 0,1,0），改成 `.grab-list-body .ck-row` 才排成四列。
+- 实测：Firefox 37 条 → 选 6 条（youtube + x.com）导入后 cookies 只剩 6 条；再全选导入恢复 37 条；控制台零异常。
+
+### 10.35 高级选项红色加粗（2026-10-25 追加）
+
+- `.advanced summary` 由灰色小字改成 `#c0392b` + `font-weight:700`，`::marker` 同步染色，展开后颜色再深一档（`#a32f22`），hover 也加深；`padding:3px 0` 让点击区大一点。
+- 实测 computed style：`rgb(192, 57, 43)` / `700` / `13px`。
+
+### 10.36 所有文件悬浮说明（2026-10-25 追加）
+
+- `renderFiles` 给每行加 `data-tip`，由 `FILE_TIPS` 正则表映射到中文业务含义（摘要卡/观点清单/长文/文案/文案纯文本/结构化数据/逐字稿/字幕/元数据/运行记录/分块/取词来源/原视频/原始音轨/notes 分块要点/日志）。
+- 自己实现了一个 `#tip` 浮层（`position:fixed`，深色底，`pointer-events:none`），`mouseover` 委托 + 越界翻转到上方 + 滚动即隐藏；不用原生 `title`，避免 1 秒延迟和样式不可控。
+- 行光标改成 `cursor: help`（可点击行仍是 pointer）。
+- 实测：`manifest.json` hover 出「运行记录：每个阶段的做法、耗时、token 用量」，浮层宽 286px、位置随行、零异常。
+
+### 10.37 去掉表单下的提示段落（并修类名冲突）（2026-10-25 追加）
+
+- 症状：开始按钮下方出现一条深色圆角气泡，里面是"有原生字幕的视频会直接取字幕…"的文字。
+- 根因：10.36 给悬浮提示新写的 `.tip { position:fixed; background:#1f2937; … }` **撞上了正文里已有的 `<p class="tip">`**（原本是灰色小字说明），于是整段文字被渲染成浮层样式。
+- 处理：删掉那条提示段落（内容已在「怎么用」tips 里覆盖），并把自定义浮层改名为 `.hover-tip`（元素 id 仍是 `#tip`，JS 不用改），避免以后再撞名。
+- 实测：页面无 `p.tip`；浮层仍正常（`position:fixed`、`rgb(31,41,55)`、hover `manifest.json` 显示运行记录说明）；控制台零异常。
+
+### 10.38 ASR 模型与登录态 cookies 提到一级（2026-10-25 追加）
+
+- 新增 `.primary-opts` 区块（置于产物勾选行与「开始」之间，顶部一条虚线分隔）：左边 ASR 模型下拉，右边整条 cookies 行（状态 + 一键获取 + 上传 + 清除）及其浏览器选择面板。
+- 高级选项收缩为：语言 / 文案风格 / 浏览器 Cookies / 代理 / LLM 模型。
+- 踩坑：第一次用"先算索引再删两段"的脚本改 HTML，删完第一段后第二段索引失效，把 advanced 区块切坏（重复 cookie 行 + 丢了 浏览器 Cookies/代理 字段）；改为按 `<details class="advanced">` … `</details>` 整体重写才恢复。
+- 实测：`asrModel` 与 `cookieStatus` 的 `closest("details")` 均为 null、`closest(".primary-opts")` 均命中；控制台零异常。
+
+### 10.39 cookies 字段与 ASR 字段统一展示（2026-10-25 追加）
+
+- 登录态 cookies 由"一整行按钮"改成和 ASR 模型同构的字段：`label` 在上面（同样的 12px 灰字），下面是 38px 高的 `.cookie-box`（状态文字 + 右侧「一键获取 / 上传 / 清除」三个文字按钮）。
+- ASR 的 select 同步改成 `width:232px; height:38px`，两个字段现在同高（38 vs 38）、同一基线，`sameRow=true`。
+- 浏览器选择面板 `#cookieGrabPanel` 用 `flex-basis:100%` 在下面独占一行（实测宽 1160px）。
+- 顺带修：探测失败时"去处理 cookies"的动作原本展开高级选项 + 高亮 `.cookie-row`，现在指向一级的 `.cookie-field`，并把 `.flash` 动画挂到 `.cookie-box`。
+
+### 10.40 两个字段改为垂直排列（2026-10-25 追加）
+
+- `.primary-opts` 由 `flex-direction: row` 改成 `column`，ASR 模型与登录态 cookies 上下各占一行、整宽、左边缘对齐（实测两者 x 都是 197、宽 1160）。
+- ASR 下拉由 232px 改成 `width:100%`，与 cookies 框等宽；面板仍在其下方整宽展开。
+
+### 10.41 两个字段收回高级选项（2026-10-25 追加）
+
+- 撤销 10.38/10.39/10.40 的一级展示：`.primary-opts` 整块删除，ASR 模型作为普通 `<label>` 回到 `adv-grid` 第一格；登录态 cookies 作为 `.cookie-field`（`grid-column: 1/-1`）放在网格末尾，仍是「标签 + 整宽 `.cookie-box`」的形态。
+- 高级选项当前顺序：ASR 模型 / 语言 / 文案风格 / 浏览器 Cookies / 代理 / LLM 模型 / 登录态 cookies。
+- 探测失败跳转逻辑恢复为先展开 `details.advanced` 再高亮 `.cookie-field`（字段又藏起来了，不展开会闪不到）。
+- 实测：`asrModel` 与 `cookieStatus` 的 `closest("details")` 均命中、`.primary-opts` 已不存在；展开后 cookies 框整宽 1160px、位于 ASR 下方。
+
+### 10.42 修复「文案」取消不掉 + 零产物提示（2026-10-25 追加）
+
+- 现象：把摘要卡/观点清单/长文都取消后，再点「文案」取消，勾选会弹回来。
+- 根因：init 里有个"至少保留一个模式"的守卫——`change` 时若 `input[name="mode"]:checked` 为 0 就 `el.checked = true` 强制回选；当文案是最后一个被勾的项时，它必然被弹回。
+- 处理：删掉这个守卫，四个产物允许全部取消；改为在模式行末尾用 `.modes.no-mode::after` 显示红色「↑ 至少选一份产物」，提交时原有的 alert 文案补上「文案」。
+- 踩坑：新增的 change 监听第一次插到了 `#srcSwitch` 的**另一处**绑定（不在 init 里，永不执行），导致提示不出现；按「启动」注释定位后重新插入才生效。
+- 实测：依次取消三个后点「文案」→ `copy:false`（不再弹回）；全部取消时 `no-mode` 类生效、`::after` 内容为「↑ 至少选一份产物」。
+
+### 10.43 cookies 列表加表头与排序（2026-10-25 追加）
+
+- 列表上方新增 `.grab-cols` 表头：域名 / 名称 / 过期三个按钮，点击切换升序/降序（`▲`/`▼`），当前排序列高亮（`.ck-col.on`）。
+- 排序实现：`paintCookieRows()` 按 `state.cookieSort` 排序后重绘；`expires` 里的「会话」固定排最后，其余按日期字符串比较；同值按原始索引稳定排序。
+- 勾选状态改为 `state.cookieSelected`（Set of index），排序/重绘后**选择不丢**（实测取消 2 条 → 已选 35/37，排序两次后仍是 35/37）；确认导入也改成读这个 Set。
+- 每个单元格补了 `title`：域名带 path、名称标注 HttpOnly/Secure、过期时间原值，长内容悬停可见。
+- 实测：按名称升序首行为 `__cf_bm`、降序首行为 `ZFY`，caret 与高亮同步，控制台零异常。
+
+### 10.44 cookies 列表展示值（2026-10-25 追加）
+
+- `/api/cookies/browser` 的 `items` 增加 `value` 字段；列表新增「值」列（等宽字体、超长省略、`title` 给全文），表头同样可排序。
+- 列宽改为 `18px | 1.1fr | 0.9fr | 1.6fr | 72px`，表头与行保持一致。
+- ⚠️ 安全口径变化：之前设计是"值不出服务器"，现在为了让人看清每条 cookie 的内容（排查登录态问题），值会进入页面 DOM；截图、录屏、共享屏幕会连带暴露会话凭证。导入逻辑仍走服务端 pending 文件，不依赖前端回传值。
+- 实测：37 条正常渲染（BIDUPSID / PSTM / BAIDUID…），表头四项，控制台零异常。
+

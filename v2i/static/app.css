@@ -170,8 +170,17 @@ button.ghost:hover { background: #f1f3f8; color: var(--ink); }
 .tip strong { color: var(--ink-2); font-weight: 600; }
 
 .advanced { margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 12px; }
-.advanced summary { cursor: pointer; color: var(--muted); font-size: 13px; }
-.advanced summary:hover { color: var(--ink-2); }
+.advanced summary {
+  cursor: pointer;
+  color: #c0392b;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  padding: 3px 0;
+}
+.advanced summary:hover { color: #a32f22; }
+.advanced summary::marker { color: #c0392b; }
+.advanced[open] summary { color: #a32f22; }
 
 .adv-grid {
   display: grid;
@@ -578,7 +587,8 @@ button.mini:hover { background: #ffedd5; }
   background: #eef1f6;
   font: 12px "Cascadia Mono", Consolas, monospace;
 }
-.cookie-row.flash {
+.cookie-row.flash,
+.cookie-field.flash .cookie-box {
   border-color: var(--accent);
   background: #eef2ff;
   box-shadow: 0 0 0 3px rgba(59, 98, 246, .16);
@@ -950,3 +960,157 @@ button.mini:hover { background: #ffedd5; }
   .usage-head, .usage-row { grid-template-columns: minmax(0, 1.6fr) 50px 70px 70px 70px 18px; gap: 6px; }
 }
 
+/* ---------- cookies 一键获取 ---------- */
+.cookie-grab {
+  grid-column: 1 / -1;
+  margin: 8px 0 4px;
+  padding: 12px 14px;
+  border: 1px dashed #c9d3f7;
+  border-radius: 10px;
+  background: #f8faff;
+}
+.grab-head { font-size: 12.5px; color: var(--ink-2); margin-bottom: 10px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.grab-head .hint { font-size: 11px; }
+.grab-browsers { display: flex; gap: 8px; flex-wrap: wrap; }
+.grab-browsers .grab-b { border: 1px solid var(--line); background: #fff; padding: 5px 14px; font-size: 12.5px; }
+.grab-browsers .grab-b:hover { border-color: #c3cdfa; background: #f7f9ff; }
+.grab-browsers .grab-b[disabled] { opacity: .55; cursor: wait; }
+.grab-msg { margin-top: 9px; font-size: 12.5px; color: var(--ink-2); line-height: 1.7; }
+.grab-msg.err { color: var(--bad); }
+.grab-msg.ok { color: #14532d; }
+.grab-msg .hint { display: block; margin-top: 4px; color: var(--muted); font-size: 11.5px; }
+.grab-actions { margin-top: 10px; display: flex; gap: 8px; }
+
+/* cookies 选择列表 */
+.grab-list { margin-top: 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; overflow: hidden; }
+.grab-list-head { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.grab-list-head .check { font-size: 12.5px; }
+.grab-count { font-size: 12px; color: var(--muted); }
+.grab-list-head input[type="search"] {
+  margin-left: auto;
+  min-width: 180px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 12px;
+  background: #fbfcfe;
+  outline: none;
+}
+.grab-list-body { max-height: 240px; overflow: auto; }
+.grab-list-body .ck-row {
+  display: grid;
+  grid-template-columns: 18px minmax(130px, 1.1fr) minmax(110px, 0.9fr) minmax(160px, 1.6fr) 72px;
+  gap: 10px;
+  align-items: center;
+  padding: 5px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid #f2f4f9;
+  cursor: pointer;
+}
+.grab-list-body .ck-row:hover { background: #f7f9ff; }
+.grab-list-body .ck-row input { margin: 0; }
+.grab-list-body .ck-domain { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grab-list-body .ck-name { font-family: "Cascadia Mono", Consolas, monospace; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grab-list-body .ck-exp { color: var(--muted); text-align: right; }
+
+/* 悬浮提示（独立类名，别再和正文 .tip 段落撞名） */
+.hover-tip {
+  position: fixed;
+  z-index: 60;
+  max-width: 320px;
+  padding: 7px 11px;
+  border-radius: 8px;
+  background: #1f2937;
+  color: #f8fafc;
+  font-size: 12px;
+  line-height: 1.65;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, .22);
+  pointer-events: none;
+}
+.file-row[data-tip] { cursor: help; }
+.file-row.clickable[data-tip] { cursor: pointer; }
+
+/* 高级选项里的登录态 cookies 字段（整宽） */
+.adv-grid .cookie-field {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.adv-grid .cookie-field .cookie-box { width: 100%; }
+
+/* 登录态 cookies：和 ASR 模型同一个展示形式 */
+.cookie-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+  font-size: 13px;
+}
+.cookie-box .cookie-status { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cookie-box .cookie-status.ok { color: #14532d; }
+.cookie-box .cookie-status.warn { color: #a35a00; }
+.cookie-acts { margin-left: auto; display: flex; gap: 10px; flex: none; }
+.link-btn {
+  padding: 2px 4px;
+  border: 0;
+  background: none;
+  color: var(--brand);
+  font-size: 12px;
+  cursor: pointer;
+}
+.link-btn:hover { text-decoration: underline; }
+
+/* 一份产物都没勾时给个提示 */
+.modes.no-mode::after {
+  content: "↑ 至少选一份产物";
+  align-self: center;
+  font-size: 12px;
+  color: var(--bad);
+}
+
+/* cookies 列表表头 + 排序 */
+.grab-cols {
+  display: grid;
+  grid-template-columns: 18px minmax(130px, 1.1fr) minmax(110px, 0.9fr) minmax(160px, 1.6fr) 72px;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: #fafbfe;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.ck-col {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.ck-col:hover { color: var(--ink); }
+.ck-col.on { color: var(--brand); font-weight: 600; }
+.ck-caret { font-size: 9px; opacity: .8; }
+.grab-cols .ck-col:last-child { justify-content: flex-end; }
+
+.grab-list-body .ck-value {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.grab-list-body .ck-row:hover .ck-value { color: var(--ink); }
