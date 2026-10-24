@@ -654,3 +654,10 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 - ⚠️ 安全口径变化：之前设计是"值不出服务器"，现在为了让人看清每条 cookie 的内容（排查登录态问题），值会进入页面 DOM；截图、录屏、共享屏幕会连带暴露会话凭证。导入逻辑仍走服务端 pending 文件，不依赖前端回传值。
 - 实测：37 条正常渲染（BIDUPSID / PSTM / BAIDUID…），表头四项，控制台零异常。
 
+### 10.45 修复「清除 cookies」后的 501（2026-08-14 追加）
+
+- 现象：点「清除」后状态栏变成一坨 HTML —— `501 Unsupported method ('{}GET')`。
+- 根因：`do_POST` 里 `/api/cookies/clear` 分支在**读取请求体之前**就返回了；HTTP/1.1 keep-alive 连接上残留的 `{}` 被服务器当成下一个请求行，于是紧随其后的 `GET /api/cookies` 变成非法方法 `{}GET`。
+- 处理：`do_POST` 一进来就 `self.close_connection = True`，POST 响应后关闭连接、不复用；简单粗暴但彻底消除这类"body 没读完导致流错位"的问题（本地工具，多开一条 TCP 无感）。
+- 实测：点清除 → 状态栏正常变「未上传 —— …」，控制台零异常；随后 `/api/cookies` 正常返回。
+

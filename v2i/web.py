@@ -704,6 +704,10 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
 
+        # 有分支在读取 body 之前就返回（例如 cookies/clear），请求体残留会让
+        # keep-alive 连接把 "{}" 当成下一个请求行（501 Unsupported method）。POST 一律不复用连接。
+        self.close_connection = True
+
         # 上传是原始字节流，不能按 JSON 读
         if parsed.path == "/api/cookies":
             try:
