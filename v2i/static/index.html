@@ -36,6 +36,17 @@
       <div class="card-head">
         <h2>新建任务</h2>
         <span class="hint" id="queueHint"></span>
+        <span class="tips-wrap">
+          <button class="ghost tips-btn" id="howtoBtn" type="button" aria-expanded="false">怎么用 ?</button>
+          <div class="tips-pop" id="howtoPop" hidden>
+            <h3>三步</h3>
+            <ol class="steps">
+              <li><strong>给素材</strong><span>贴一个公开链接，或者把本地音频/视频拖进来</span></li>
+              <li><strong>等两步</strong><span>有字幕就直接取（秒级）；没字幕才下音频转写（约 3–4× 实时）</span></li>
+              <li><strong>读产物</strong><span>摘要卡 / 观点清单 / 长文，结论都带可回溯的时间码</span></li>
+            </ol>
+          </div>
+        </span>
       </div>
       <form id="runForm">
         <div class="seg-switch" id="srcSwitch">
@@ -150,18 +161,6 @@
       </details>
     </section>
 
-    <section class="card" id="emptyState">
-      <div class="card-head">
-        <h2>怎么用</h2>
-        <span class="hint">三步</span>
-      </div>
-      <ol class="steps">
-        <li><strong>给素材</strong><span>贴一个公开链接，或者把本地音频/视频拖进来</span></li>
-        <li><strong>等两步</strong><span>有字幕就直接取（秒级）；没字幕才下音频转写（约 3–4× 实时）</span></li>
-        <li><strong>读产物</strong><span>摘要卡 / 观点清单 / 长文，结论都带可回溯的时间码</span></li>
-      </ol>
-    </section>
-
     <section class="card" id="resultCard" hidden>
       <div class="card-head">
         <h2 id="resultTitle">结果</h2>
@@ -173,15 +172,6 @@
     </section>
   </div>
 
-  <aside class="side-col">
-    <section class="card history">
-      <div class="card-head">
-        <h2>历史</h2>
-        <button class="ghost" id="refreshRuns" type="button">刷新</button>
-      </div>
-      <div id="runs"><p class="empty">还没有跑过任务</p></div>
-    </section>
-  </aside>
 </main>
 
 <section class="page" id="page-history" hidden>
@@ -194,9 +184,19 @@
       <div class="hist-tools">
         <input id="histSearch" type="search" placeholder="搜索标题 / 作者…" autocomplete="off" />
         <label class="check"><input type="checkbox" id="histVideoOnly" /><span>只看有视频的</span></label>
+        <label class="hist-size">每页
+          <select id="histSize">
+            <option value="5">5</option>
+            <option value="10" selected>10</option>
+            <option value="20">20</option>
+            <option value="50">50</option>
+          </select>
+          条
+        </label>
         <button class="ghost" id="histRefresh" type="button">刷新</button>
       </div>
       <ul class="hist-list" id="histList"></ul>
+      <div class="pager" id="histPager"></div>
     </section>
     <div id="histDetailSlot"></div>
   </div>

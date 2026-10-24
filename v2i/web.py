@@ -13,6 +13,7 @@ from __future__ import annotations
 import difflib
 import io
 import json
+import shutil
 import queue
 import socket
 import threading
@@ -657,6 +658,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "removed": removed, "items": []})
             if parsed.path == "/api/fetch_video":
                 return self._json(self._start_video(body))
+            if parsed.path == "/api/run/delete":
+                return self._json(self._delete_run(body))
             if parsed.path == "/api/settings":
                 return self._save_settings(body)
             if parsed.path == "/api/settings/test":
@@ -875,6 +878,19 @@ class Handler(BaseHTTPRequestHandler):
                 "b_chars": len(b),
             },
         }
+
+    def _delete_run(self, body: dict) -> dict:
+        name = str(body.get("dir") or "")
+        run_dir = _safe_run_dir(name, self.cfg)
+        if not run_dir:
+            return {"error": "找不到这条任务"}
+        trash = PROJECT_ROOT / ".trash"
+        trash.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        target = trash / f"{run_dir.name}-{stamp}"
+        shutil.move(str(run_dir), str(target))
+        print(f"  已删除任务：{run_dir.name} → {target.name}", flush=True)
+        return {"ok": True, "dir": run_dir.name, "moved_to": str(target)}
 
     def _start_video(self, body: dict) -> dict:
         name = str(body.get("dir") or "")

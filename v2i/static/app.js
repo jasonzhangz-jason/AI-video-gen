@@ -1,4 +1,4 @@
-﻿/* v2i Web GUI —— 无框架、无外部依赖 */
+/* v2i Web GUI —— 无框架、无外部依赖 */
 (() => {
   "use strict";
 
@@ -214,13 +214,15 @@
       const runs = await api("/api/runs");
       renderRuns(runs);
     } catch (err) {
-      $("#runs").innerHTML = `<p class="empty">读取失败：${escapeHtml(err.message)}</p>`;
+      const rbox = $("#runs");
+      if (rbox) rbox.innerHTML = `<p class="empty">读取失败：${escapeHtml(err.message)}</p>`;
     }
   }
 
   function renderRuns(runs) {
     state.runs = runs || [];
     const box = $("#runs");
+    if (!box) return;
     if (!runs.length) {
       box.innerHTML = `<p class="empty">还没有跑过任务</p>`;
       return;
@@ -254,7 +256,6 @@
       state.run = detail;
       const s = detail.summary || {};
       $("#resultCard").hidden = false;
-      const empty = $("#emptyState"); if (empty) empty.hidden = true;
       $("#resultTitle").textContent = s.title || dir;
       const bits = [];
       if (s.uploader) bits.push(s.uploader);
@@ -812,6 +813,12 @@
       unmountResultCard();
     }
     if (page === "new") {
+      // 回到新建任务时保持"干净"：只有本会话真的跑过任务才展示结果卡，
+      // 浏览历史任务留下的详情不带过来（避免看起来像新建页默认在展示历史）
+      if (!state.jobId) {
+        const card = $("#resultCard");
+        if (card) card.hidden = true;
+      }
       if ((location.hash || "").startsWith("#page=")) history.replaceState(null, "", "#page=new");
     } else {
       history.replaceState(null, "", `#page=${page}`);
@@ -821,6 +828,16 @@
       loadRewriteHistory();
     }
     if (page === "settings") loadSettings();
+  }
+
+  function toggleHowto(force) {
+    const pop = $("#howtoPop");
+    const btn = $("#howtoBtn");
+    if (!pop || !btn) return;
+    const show = force === undefined ? pop.hidden : !!force;
+    pop.hidden = !show;
+    btn.setAttribute("aria-expanded", show ? "true" : "false");
+    btn.classList.toggle("active", show);
   }
 
   async function loadSettings() {
@@ -1130,6 +1147,8 @@
     parent.insertBefore(card, anchor);
   }
 
+  const PAGE_SIZES = [5, 10, 20, 50];
+
   async function renderHistoryPage() {
     const box = $("#histList");
     if (!box) return;
@@ -1145,14 +1164,21 @@
       if (!q) return true;
       return `${r.title || ""} ${r.uploader || ""}`.toLowerCase().includes(q);
     });
+    const size = state.histSize || 10;
+    const pages = Math.max(1, Math.ceil(shown.length / size));
+    state.histPage = Math.min(state.histPage || 1, pages);
+    const start = (state.histPage - 1) * size;
+    const pageRows = shown.slice(start, start + size);
+
     $("#histCount").textContent = runs.length
       ? `共 ${runs.length} 条${shown.length !== runs.length ? `，命中 ${shown.length} 条` : ""}`
       : "还没有任务";
     if (!shown.length) {
       box.innerHTML = `<li class="hist-empty">${runs.length ? "没有匹配的任务" : "跑完第一个任务后，这里会按时间倒序列出全部记录。"}</li>`;
+      renderPager(0, 1, size);
       return;
     }
-    box.innerHTML = shown.map((r) => {
+    box.innerHTML = pageRows.map((r) => {
       const bits = [];
       if (r.duration) bits.push(r.duration);
       if (r.source) bits.push(r.source === "subtitle" ? "字幕" : r.source === "video" ? "视频转写" : "音频转写");
@@ -1168,6 +1194,7 @@
           <div class="hist-badges">
             ${r.has_video ? '<span class="badge video">VIDEO</span>' : ""}
             ${(r.skipped || []).length ? '<span class="badge warn">部分跳过</span>' : ""}
+            <button class="hist-del" data-dir="${escapeHtml(r.dir)}" type="button" title="删除这条任务">删除</button>
             <span class="hist-go">查看 ›</span>
           </div>
         </li>`;
@@ -1175,6 +1202,63 @@
     box.querySelectorAll(".hist-row").forEach((row) => {
       row.addEventListener("click", () => openHistoryRun(row.dataset.dir));
     });
+    box.querySelectorAll(".hist-del").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteRun(btn.dataset.dir);
+      });
+    });
+    renderPager(shown.length, pages, size);
+  }
+
+  function renderPager(total, pages, size) {
+    const pager = $("#histPager");
+    if (!pager) return;
+    if (total <= size) {
+      pager.innerHTML = "";
+      return;
+    }
+    const cur = state.histPage || 1;
+    const nums = [];
+    const from = Math.max(1, cur - 2);
+    const to = Math.min(pages, cur + 2);
+    for (let n = from; n <= to; n += 1) nums.push(n);
+    pager.innerHTML = `
+      <button class="ghost" data-page="${cur - 1}" ${cur <= 1 ? "disabled" : ""} type="button">上一页</button>
+      ${from > 1 ? '<span class="pager-dots">…</span>' : ""}
+      ${nums.map((n) => `<button class="pager-num${n === cur ? " active" : ""}" data-page="${n}" type="button">${n}</button>`).join("")}
+      ${to < pages ? '<span class="pager-dots">…</span>' : ""}
+      <button class="ghost" data-page="${cur + 1}" ${cur >= pages ? "disabled" : ""} type="button">下一页</button>
+      <span class="pager-info">第 ${cur} / ${pages} 页 · 每页 ${size} 条</span>`;
+    pager.querySelectorAll("button[data-page]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const target = Math.min(Math.max(1, Number(btn.dataset.page)), pages);
+        state.histPage = target;
+        renderHistoryPage();
+      });
+    });
+  }
+
+  async function deleteRun(dir) {
+    const name = (dir || "").split(/[\\/]/).pop();
+    if (!confirm(`删除任务「${name}」？\n\n文件会被移到项目下的 .trash 目录，不会立刻消失。`)) return;
+    try {
+      const r = await api("/api/run/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dir }),
+      });
+      if (r.error) throw new Error(r.error);
+      if ((state.run || {}).dir === dir) {
+        state.run = null;
+        const card = $("#resultCard");
+        if (card) card.hidden = true;
+      }
+      await loadRuns();
+      await renderHistoryPage();
+    } catch (err) {
+      alert("删除失败：" + err.message);
+    }
   }
 
   async function openHistoryRun(dir) {
@@ -1343,7 +1427,8 @@
   // ---------------------------------------------------------------- 启动
 
   $("#runForm").addEventListener("submit", startJob);
-  $("#refreshRuns").addEventListener("click", loadRuns);
+  const refreshRuns = $("#refreshRuns");
+  if (refreshRuns) refreshRuns.addEventListener("click", loadRuns);
   document.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") $("#runForm").requestSubmit();
   });
@@ -1376,9 +1461,22 @@
   });
   ["histSearch", "histVideoOnly"].forEach((id) => {
     const el = $("#" + id);
-    if (el) el.addEventListener("input", renderHistoryPage);
+    if (el) el.addEventListener("input", () => { state.histPage = 1; renderHistoryPage(); });
+  });
+  const sizeSel = $("#histSize");
+  if (sizeSel) sizeSel.addEventListener("change", () => {
+    state.histSize = Number(sizeSel.value) || 10;
+    state.histPage = 1;
+    renderHistoryPage();
   });
   $("#histRefresh").addEventListener("click", async () => { await loadRuns(); renderHistoryPage(); });
+  $("#howtoBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleHowto(); });
+  document.addEventListener("click", (e) => {
+    const pop = $("#howtoPop");
+    if (!pop || pop.hidden) return;
+    if (!e.target.closest(".tips-wrap")) toggleHowto(false);
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") toggleHowto(false); });
   $("#fetchVideoBtn").addEventListener("click", () => {
     const dir = $("#fetchVideoBtn").dataset.dir;
     if (dir) fetchVideoFor(dir);
