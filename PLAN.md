@@ -398,3 +398,13 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 - 缓存按风格区分：`copy.json` 里带 `style` 字段，风格不匹配就重跑，避免切了档位还命中旧结果。
 - 三档共用同一套渲染，`copy.md` 的 frontmatter 与首行会标出当前档位与是否润色（`原样 / 轻度整理 / 口播稿` × `已润色 / 未润色`）。
 - 没 key 时 `light`/`script` 会自动退回 `raw` 并在日志与文档里说明，不会静默假装润色过。
+
+### 10.10 多平台支持（2026-10-25 追加）
+
+- 新增 `v2i/platforms.py`：13 个平台登记（id / 名称 / 域名含短链 / 需要 cookie 还是代理 / 一句话说明），提供 `match()` 反查与 `check()` 校验。
+- GUI：平台下拉（默认自动识别，贴链接时按域名提示）+「先探测」按钮（不下载，直接看标题/时长/字幕/格式）。
+- 新增 `/api/platforms`、`/api/probe`；`probe` 也做成了 CLI 子命令（`v2i probe`）。
+- 新增 `--cookies-from-browser`（chrome/edge/firefox）与 GUI 的 cookies/代理输入，任务级覆盖 `.env`，不必改配置重启。
+- `fetch.friendly_error()`：把 yt-dlp 的英文报错翻译成"下一步做什么"（bot 校验 / 新鲜 cookie / DPAPI 解密失败 / 不支持的 URL 形式 / 403 / 超时）。
+- 实测结论：B 站与音频直链端到端可用；YouTube 可达但触发 bot 校验；抖音要求 fresh cookies 且只认 `/video/<id>`；其余平台受 cookie/代理限制未实测通过——已在 README 写成矩阵，不夸大。
+- 顺手修掉 ASR 的一个日志噪音：关闭 VAD 重试时会把同一句提示打印两次。

@@ -95,7 +95,9 @@ v2i.cmd            # 不带参数双击 = 同一个效果；带参数 = 当 CLI 
 
 能做的事：
 
-- **两种素材来源**：贴链接（B 站 / YouTube / 播客页），或**把本地音频/视频拖进来**（mp3 / m4a / wav / mp4 / mkv …，最大 4GB）。
+- **两种素材来源**：贴链接，或**把本地音频/视频拖进来**（mp3 / m4a / wav / mp4 / mkv …，最大 4GB）。
+- **平台下拉 + 先探测**：13 个平台可选（B 站 / 抖音 / 快手 / 小红书 / 微博 / 西瓜 / YouTube / X / TikTok / Instagram / Vimeo / 播客…），贴链接会自动识别；点「先探测」不下载就能看到标题、时长、有没有字幕、多少个格式——失败也会直接告诉你缺 cookie 还是缺代理。
+- **Cookies / 代理**：高级选项里可选用浏览器 cookies（Chrome / Edge / Firefox）或填代理地址，不必改 `.env`。
 - **默认就开箱可用**：字幕优先 + `small` 模型，勾选要哪几份产物（摘要卡 / 观点清单 / 长文）直接开始；高级选项里可换模型、语言、强制重跑。
 - **实时进度**：阶段（解析 → 下载 → 转写 → 提炼）、进度条、逐行日志（含 VAD 回退、转写百分比）。
 - **产物阅读**：摘要 / 观点 / 长文 / **文案** / 逐字稿 / 字幕 / 结构化 JSON / 元数据，Markdown 渲染带时间码高亮；文案页有「复制全文」。
@@ -118,12 +120,43 @@ v2i.cmd            # 不带参数双击 = 同一个效果；带参数 = 当 CLI 
 
 ![高级选项](docs/gui-advanced.png)
 
+![平台与探测](docs/gui-platform.png)
+
 > 截图里的文案是接 mock 模型跑出来的（为了先验证链路），换成真实 key 后就是正常内容；界面、时间码、渲染是真的。
 
 实现上刻意做得很薄：标准库 `http.server` + 原生 JS，没有 Flask、没有 npm、不加载任何 CDN；任务串行执行（单 worker），因为 ASR 本来就吃满 CPU，并发只会互相拖慢。只监听 `127.0.0.1`，不对外网暴露。
 
 > 页面右上角绿色=已配好 LLM key，橙色=没配。没配 key 时**转写照常跑完并保留**（`transcript.md` / `.srt` 都在），只是提炼会跳过并在日志里说明原因——不会白跑一遍算力。
 
+## 平台支持
+
+下载能力来自 yt-dlp（1800+ 站点），这里只列**本机实测过**的：
+
+| 平台 | 状态 | 实际表现 / 要注意什么 |
+|---|---|---|
+| 哔哩哔哩 B 站 | ✅ 已验证 | 下载 → 转写 → 提炼全程跑通；音频无需 cookie，1080P+ 要登录 |
+| 任意音频直链（mp3/m4a） | ✅ 已验证 | yt-dlp 通用解析，直接下音频转写；无元数据时时长由 ASR 回填 |
+| 抖音 | ⚠️ 需 cookies | 报 `Fresh cookies are needed`；且只认 `/video/<id>`，`/shipin/<id>` 不支持 |
+| YouTube | ⚠️ 需 cookies / 代理 | 站点可达，但会触发 `Sign in to confirm you're not a bot` |
+| 快手 / 小红书 / 微博 | ⚠️ 需 cookies | 未登录态下基本都要求 cookie，本机无登录态未实测通过 |
+| X / TikTok / Instagram / Vimeo | ⚠️ 需代理 + cookies | 国内直连不稳，部分内容需要登录 |
+
+**两种给 cookie 的方式**（抖音/小红书/X 基本绕不开）：
+
+1. **浏览器扩展导出** `cookies.txt`（Netscape 格式），路径写进 `.env` 的 `V2I_COOKIES=...`，或 GUI 高级选项里的浏览器 cookies；
+2. **直接读浏览器**：GUI 高级选项选 Chrome / Edge / Firefox，或命令行 `--cookies-from-browser chrome`。
+
+> ⚠️ 新版 Chrome / Edge（v127+）的 cookie 有 App-Bound 加密，yt-dlp 可能解不开，会报 `Failed to decrypt with DPAPI`；这时请用扩展导出 `cookies.txt`，或改用 Firefox。Chrome 正在运行时也会报 `Could not copy Chrome cookie database`，先关掉浏览器再试。
+
+**国内访问 YouTube / X / TikTok** 需要代理：`.env` 里 `V2I_PROXY=http://127.0.0.1:7890`，或 GUI 高级选项「代理」直接填。
+
+命令行也能先探一下，避免白跑：
+
+```powershell
+.\v2i.cmd probe "<url>"                          # 标题/时长/字幕/格式
+.\v2i.cmd probe "<url>" --cookies-from-browser edge
+.\v2i.cmd run "<url>" --platform douyin --cookies-from-browser chrome
+```
 ## 产物
 
 ```

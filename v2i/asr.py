@@ -103,7 +103,8 @@ def transcribe(audio: Path, cfg: Config, workdir: Path, force: bool = False) -> 
         if segments:
             break
         # 纯音乐/演唱会被 Silero VAD 判成"无人声"，此时关掉 VAD 再来一遍
-        print("  VAD 过滤后无内容（可能是音乐/演唱），关闭 VAD 重试", flush=True)
+        if use_vad:
+            print("  VAD 过滤后无内容（可能是音乐/演唱），关闭 VAD 重试", flush=True)
 
     if not segments:
         raise AsrError("转写结果为空：音频可能没有语音，或语言检测失败（可试 --language zh）")
