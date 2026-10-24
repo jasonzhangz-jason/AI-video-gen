@@ -98,6 +98,13 @@
                 <option value="script">口播稿 · 改写成能念的稿子</option>
               </select>
             </label>
+            <div class="cookie-row">
+              <span class="inline-label">登录态 cookies</span>
+              <span class="cookie-status" id="cookieStatus">读取中…</span>
+              <button class="ghost" id="cookiePick" type="button">上传 cookies.txt</button>
+              <button class="ghost" id="cookieClear" type="button">清除</button>
+              <input type="file" id="cookieFile" accept=".txt" hidden />
+            </div>
             <label>浏览器 Cookies
               <select id="cookiesFrom">
                 <option value="">不使用（cookies.txt 走 .env）</option>

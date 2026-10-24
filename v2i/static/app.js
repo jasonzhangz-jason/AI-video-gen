@@ -607,6 +607,59 @@
     out.textContent = platformNote(p);
   }
 
+  async function loadCookies() {
+    const el = $("#cookieStatus");
+    if (!el) return;
+    try {
+      const s = await api("/api/cookies");
+      if (!s.present) {
+        el.className = "cookie-status warn";
+        el.textContent = "未上传 —— 抖音 / 小红书 / 快手 / X / YouTube 受限时再传";
+      } else {
+        el.className = "cookie-status ok";
+        el.textContent = `已上传 · ${s.count} 条 cookies · ${s.mtime}${s.netscape ? "" : "（格式可能不对）"}`;
+      }
+    } catch (err) {
+      el.className = "cookie-status";
+      el.textContent = "读取失败：" + err.message;
+    }
+  }
+
+  function uploadCookies(file) {
+    const el = $("#cookieStatus");
+    el.className = "cookie-status";
+    el.textContent = "上传中…";
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/cookies");
+    xhr.setRequestHeader("X-Filename", encodeURIComponent(file.name));
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText || "{}"); } catch (e) { /* ignore */ }
+      if (data.error) {
+        el.className = "cookie-status warn";
+        el.textContent = "失败：" + data.error;
+      } else {
+        loadCookies();
+      }
+    };
+    xhr.onerror = () => {
+      el.className = "cookie-status warn";
+      el.textContent = "上传失败：连接中断";
+    };
+    xhr.send(file);
+  }
+
+  async function clearCookies() {
+    const el = $("#cookieStatus");
+    try {
+      await fetch("/api/cookies/clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      loadCookies();
+    } catch (err) {
+      el.className = "cookie-status warn";
+      el.textContent = "清除失败：" + err.message;
+    }
+  }
+
   async function loadPlatforms() {
     try {
       const data = await api("/api/platforms");
@@ -692,6 +745,9 @@
   });
   $("#fileInput").addEventListener("change", (e) => selectFile(e.target.files[0]));
   $("#probeBtn").addEventListener("click", probeUrl);
+  $("#cookiePick").addEventListener("click", () => $("#cookieFile").click());
+  $("#cookieFile").addEventListener("change", (e) => { if (e.target.files[0]) uploadCookies(e.target.files[0]); e.target.value = ""; });
+  $("#cookieClear").addEventListener("click", () => { if (confirm("清除已上传的 cookies？")) clearCookies(); });
   $("#platform").addEventListener("change", renderPlatformNote);
   $("#url").addEventListener("input", () => {
     if ($("#platform").value !== "auto") return;
@@ -735,6 +791,7 @@
   });
   loadRuns();
   loadPlatforms();
+  loadCookies();
 
   // #run=<目录名> 直达某次结果
   const m = /^#run=(.+)$/.exec(location.hash || "");

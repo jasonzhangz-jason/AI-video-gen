@@ -24,7 +24,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 from . import __version__
-from .config import PROJECT_ROOT, Config, ConfigError
+from .config import DEFAULT_COOKIES, PROJECT_ROOT, Config, ConfigError
 from .util import now_iso, read_json, slugify, write_json
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -55,6 +55,27 @@ ALLOWED_MEDIA = {
     ".mp4", ".mkv", ".mov", ".m4v", ".webm", ".ts", ".flv",
 }
 MAX_UPLOAD_BYTES = 4 * 1024 ** 3
+
+
+def _cookie_status() -> dict:
+    path = DEFAULT_COOKIES
+    if not path.exists():
+        return {"present": False, "path": str(path)}
+    text = path.read_text(encoding="utf-8", errors="replace")
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    cookies = [ln for ln in lines if not ln.startswith("#") or ln.startswith("#HttpOnly_")]
+    netscape = "Netscape HTTP Cookie File" in text or (
+        cookies and all(len(ln.split("\t")) >= 7 for ln in cookies[:5])
+    )
+    stat = path.stat()
+    return {
+        "present": True,
+        "path": str(path),
+        "size": stat.st_size,
+        "count": len(cookies),
+        "mtime": time.strftime("%m-%d %H:%M", time.localtime(stat.st_mtime)),
+        "netscape": bool(netscape),
+    }
 
 _jobs: dict[str, dict] = {}
 _lock = threading.Lock()
@@ -442,6 +463,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self._status())
             if route == "/api/runs":
                 return self._json(self._runs())
+            if route == "/api/cookies":
+                return self._json(_cookie_status())
             if route == "/api/platforms":
                 from . import platforms as platforms_mod
                 url = (query.get("url") or [""])[0]
@@ -497,6 +520,21 @@ class Handler(BaseHTTPRequestHandler):
         query = parse_qs(parsed.query)
 
         # 上传是原始字节流，不能按 JSON 读
+        if parsed.path == "/api/cookies":
+            try:
+                result = self._save_cookies()
+                if result.get("error"):
+                    return self._error(400, result["error"])
+                return self._json(result)
+            except Exception as exc:  # noqa: BLE001
+                return self._error(500, f"{type(exc).__name__}: {exc}")
+        if parsed.path == "/api/cookies/clear":
+            try:
+                if DEFAULT_COOKIES.exists():
+                    DEFAULT_COOKIES.unlink()
+                return self._json(_cookie_status())
+            except OSError as exc:
+                return self._error(500, str(exc))
         if parsed.path == "/api/upload":
             try:
                 return self._json(self._upload(query))
@@ -653,6 +691,29 @@ class Handler(BaseHTTPRequestHandler):
         if not url and not retry:
             return {"error": "请填视频链接"}
         return self._new_job(body, "url", url=url)
+
+    def _save_cookies(self) -> dict:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            return {"error": "空文件"}
+        if length > 2 * 1024 * 1024:
+            return {"error": "文件太大：cookies.txt 一般不到 1MB"}
+        raw = self.rfile.read(length)
+        if len(raw) < length:
+            return {"error": "上传中断，请重试"}
+        text = raw.decode("utf-8", "replace")
+        if "Netscape HTTP Cookie File" not in text and "\t" not in text:
+            return {"error": "这不像 Netscape 格式的 cookies.txt（浏览器扩展导出的那种），JSON 导出不支持"}
+        DEFAULT_COOKIES.parent.mkdir(parents=True, exist_ok=True)
+        if DEFAULT_COOKIES.exists():
+            backup = DEFAULT_COOKIES.with_suffix(".bak")
+            try:
+                backup.write_bytes(DEFAULT_COOKIES.read_bytes())
+            except OSError:
+                pass
+        DEFAULT_COOKIES.write_text(text, encoding="utf-8")
+        print(f"  已更新 cookies：{DEFAULT_COOKIES}（{len(text)} 字节）", flush=True)
+        return _cookie_status()
 
     def _upload(self, query: dict) -> dict:
         """原始字节上传（不走 multipart：标准库没有可用的 multipart 解析器）。"""

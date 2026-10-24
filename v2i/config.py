@@ -8,6 +8,13 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+# GUI 上传的 cookies.txt 默认落在这里（有就自动生效，命令行也一样）
+DEFAULT_COOKIES = PROJECT_ROOT / ".cookies" / "cookies.txt"
+
+
+def default_cookies() -> Path | None:
+    return DEFAULT_COOKIES if DEFAULT_COOKIES.exists() else None
+
 # 常见 OpenAI 兼容端点。model 只是默认值，可用 V2I_MODEL / --model 覆盖。
 PROVIDERS: dict[str, dict] = {
     "deepseek": {
@@ -171,7 +178,7 @@ class Config:
             workers=int(_env("V2I_WORKERS", "2")),
             chunk_chars=int(_env("V2I_CHUNK_CHARS", "1600")),
             copy_style=_env("V2I_COPY_STYLE", "light"),
-            cookies=Path(_env("V2I_COOKIES")) if _env("V2I_COOKIES") else None,
+            cookies=Path(_env("V2I_COOKIES")) if _env("V2I_COOKIES") else default_cookies(),
             cookies_from_browser=_env("V2I_COOKIES_FROM_BROWSER", None),
             proxy=_env("V2I_PROXY", None),
         )

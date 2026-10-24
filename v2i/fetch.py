@@ -292,6 +292,10 @@ def fetch(url: str, cfg: Config, workdir: Path, force: bool = False, info: dict 
         return {"meta": cached.get("meta", {}), "source": cached.get("source", {}),
                 "segments": cached["segments"], "cached": True}
 
+    if cfg.cookies:
+        _log(f"  使用 cookies：{Path(cfg.cookies).name}（{Path(cfg.cookies).stat().st_size} B）")
+    elif getattr(cfg, "cookies_from_browser", None):
+        _log(f"  使用浏览器 cookies：{cfg.cookies_from_browser}")
     _log(f"  解析链接：{url}")
     info = info or probe(url, cfg)
     meta = _clean_meta(info)
