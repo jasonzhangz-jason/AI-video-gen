@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
@@ -51,6 +51,7 @@
           <label><input type="checkbox" name="mode" value="summary" checked /><span>摘要卡</span></label>
           <label><input type="checkbox" name="mode" value="points" checked /><span>观点清单</span></label>
           <label><input type="checkbox" name="mode" value="article" checked /><span>长文</span></label>
+          <label><input type="checkbox" name="mode" value="copy" checked /><span>文案</span></label>
         </div>
 
         <div class="submit-row">
@@ -80,6 +81,13 @@
                 <option value="zh">中文</option>
                 <option value="en">英文</option>
                 <option value="ja">日文</option>
+              </select>
+            </label>
+            <label>文案风格
+              <select id="copyStyle">
+                <option value="raw">原样 · 只去时间码/口水词</option>
+                <option value="light" selected>轻度整理 · 分段润色（推荐）</option>
+                <option value="script">口播稿 · 改写成能念的稿子</option>
               </select>
             </label>
             <label>LLM 模型（可选）

@@ -374,3 +374,27 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 - 默认值写死为"字幕优先 + small"，界面上直接标明：`默认：字幕优先 · small · int8`。
 - 没配 key 时的行为修正：转写结果保留、只跳过提炼并打印原因（原先会让整个任务失败，白跑一遍 ASR）。
 - 顺手修掉一个 Windows 坑：`ThreadingHTTPServer` 默认 `allow_reuse_address=True`，在 Windows 上会**重复绑定同一端口**，两个实例抢连接；已改为先探测端口 + 禁止复用。
+
+### 10.7 文案提取 + 文件浏览（2026-10-24 追加）
+
+- 新增第四种产物 `copy`：`out/copy.md`（带 frontmatter 的成稿）+ `out/copy.txt`（纯文本，直接粘贴）。
+- 两种档位：有 key 时让模型按 `prompts/reduce_copy.md` 做"去口水词 + 段落化"的润色（严格禁止改事实、禁止加编号）；没 key 时退化为确定性整理（`to_paragraphs`：去句首口头语、按 ~260 字分段），**文案永远有**。
+- 长稿（>12000 字）自动按 9000 字分片润色后保序拼接，不截断丢内容。
+- GUI 结果区新增「所有文件」页签：`/api/files` 列目录（跳过 `notes/chunk-*.json` 只给计数），文本可预览、任意文件可 `/api/download` 下载（带 `Content-Disposition`，流式 256KB/块）。
+- 文本页统一加「复制全文」按钮（`navigator.clipboard`，localhost 属安全上下文）。
+- 顺手修了一个真 bug：`showFile(file)`（文件选择器）与 `showFile(dir, name)`（产物渲染）**函数名撞车**，后者被覆盖导致"点历史结果一片空白"；已改名 `selectFile`。
+
+### 10.8 文件内嵌预览（2026-10-24 追加）
+
+- `/api/preview`：流式返回 + **Range 支持**（206/Content-Range），截图里音频能拖进度条就是靠它；Content-Type 按后缀映射（audio/mp4、video/mp4、image/png…）。
+- 前端改为弹层预览（`preview-overlay`）：文本走 Markdown/JSON/SRT 渲染，图片 `<img>`，音视频用原生 `<audio>/<video>`，二进制给下载引导；Esc 或点遮罩关闭。
+- 文件行按类型打标签（TXT/IMG/AUDIO/VIDEO/BIN/DIR）并整行可点，可预览的行才有 pointer；顶部加一行操作提示。
+- 顺手清掉一个失效按钮：`预览` 按钮的绑定在改用整行点击后成了死链，已删除。
+
+### 10.9 文案润色强度三档（2026-10-25 追加）
+
+- `cfg.copy_style`：`raw` / `light` / `script`，来源优先级 CLI `--copy-style` > GUI 下拉 > `.env` 的 `V2I_COPY_STYLE` > 默认 `light`。
+- `raw` 完全不调模型（纯 `to_paragraphs` 确定性整理），`light` 用 `reduce_copy.md`，`script` 用 `reduce_copy_script.md`（口播稿：短句、钩子、允许重排但不改事实）。
+- 缓存按风格区分：`copy.json` 里带 `style` 字段，风格不匹配就重跑，避免切了档位还命中旧结果。
+- 三档共用同一套渲染，`copy.md` 的 frontmatter 与首行会标出当前档位与是否润色（`原样 / 轻度整理 / 口播稿` × `已润色 / 未润色`）。
+- 没 key 时 `light`/`script` 会自动退回 `raw` 并在日志与文档里说明，不会静默假装润色过。

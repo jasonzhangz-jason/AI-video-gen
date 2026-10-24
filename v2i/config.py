@@ -1,4 +1,4 @@
-"""配置：.env + 环境变量 + 命令行覆盖，三层合一。"""
+﻿"""配置：.env + 环境变量 + 命令行覆盖，三层合一。"""
 from __future__ import annotations
 
 import os
@@ -88,6 +88,9 @@ class Config:
     prefer_subs: bool = True
     max_height: int = 0
 
+    # 文案风格：raw（原样）/ light（轻度整理）/ script（口播稿）
+    copy_style: str = "light"
+
     # 分块
     chunk_chars: int = 1600
     overlap_sentences: int = 1
@@ -166,6 +169,7 @@ class Config:
             temperature=float(_env("V2I_TEMPERATURE", "0.3")),
             workers=int(_env("V2I_WORKERS", "2")),
             chunk_chars=int(_env("V2I_CHUNK_CHARS", "1600")),
+            copy_style=_env("V2I_COPY_STYLE", "light"),
             cookies=Path(_env("V2I_COOKIES")) if _env("V2I_COOKIES") else None,
             proxy=_env("V2I_PROXY", None),
         )

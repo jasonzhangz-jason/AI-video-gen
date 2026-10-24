@@ -169,3 +169,50 @@ def normalize(transcript: dict, workdir: Path, chunk_chars: int = 1600, overlap:
     total_chars = sum(len(s.get("text") or "") for s in segments)
     print(f"  分块完成：{len(chunks)} 块 / 共 {total_chars} 字", flush=True)
     return chunks
+
+# ---------------------------------------------------------------- 文案提取
+
+# 只清句首的口头语（句中不动，避免把语法拆坏）
+_FILLER_RE = re.compile(
+    r"^(?:(?:嗯+|啊+|呃+|额+|那个|这个|就是说|然后呢|你知道吧|对吧|怎么说呢)[，,、\s]+)+"
+)
+
+
+def _clean_for_copy(text: str) -> str:
+    text = clean_cjk(text).strip()
+    text = _FILLER_RE.sub("", text)
+    text = re.sub(r"\s{2,}", " ", text)
+    return text.strip()
+
+
+def to_paragraphs(segments: list[dict], para_chars: int = 260) -> list[str]:
+    """把逐字稿压成"可直接读"的段落：去时间码、去句首口水词、按语义长度分段。"""
+    sentences: list[str] = []
+    for seg in segments:
+        raw = str(seg.get("text") or "").strip()
+        if not raw:
+            continue
+        for piece in _split_sentence(_clean_for_copy(raw)):
+            piece = piece.strip()
+            if len(piece) >= 2:
+                sentences.append(piece)
+
+    paragraphs: list[str] = []
+    buffer: list[str] = []
+    length = 0
+    for sentence in sentences:
+        buffer.append(sentence)
+        length += len(sentence)
+        if length >= para_chars:
+            paragraphs.append("".join(buffer))
+            buffer, length = [], 0
+    if buffer:
+        if paragraphs and len("".join(buffer)) < 60:
+            paragraphs[-1] = paragraphs[-1] + "".join(buffer)
+        else:
+            paragraphs.append("".join(buffer))
+    return paragraphs
+
+
+def copy_text(segments: list[dict]) -> str:
+    return "\n\n".join(to_paragraphs(segments))

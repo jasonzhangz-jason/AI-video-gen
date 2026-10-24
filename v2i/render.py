@@ -8,7 +8,7 @@ from urllib.parse import urlsplit, urlunsplit
 from .config import Config
 from .util import fmt_ts, now_iso
 
-__all__ = ["summary_md", "points_md", "article_md"]
+__all__ = ["summary_md", "points_md", "article_md", "copy_md", "copy_txt"]
 
 
 def _q(value) -> str:
@@ -175,3 +175,50 @@ def article_md(meta: dict, body: str, cfg: Config, transcript: dict | None = Non
     body = (body or "").strip()
     chars = len(body)
     return _frontmatter(meta, cfg, transcript, {"chars": str(chars)}) + f"\n{body}\n" + _footer(meta)
+
+def copy_md(meta: dict, data: dict, cfg: Config, transcript: dict | None = None) -> str:
+    """文案：去时间码、去口水词的成稿；有 key 时是润色版，没有就是原始整理版。"""
+    transcript = transcript or {"source": {"kind": "asr"}, "asr": {}}
+    paras = [str(p).strip() for p in (data.get("paras") or []) if str(p).strip()]
+    title = (data.get("title") or meta.get("title") or "未命名视频").strip()
+    chars = sum(len(p) for p in paras)
+    style = data.get("style") or "light"
+    labels = {"raw": "原样", "light": "轻度整理", "script": "口播稿"}
+    style_label = data.get("style_label") or labels.get(style, style)
+    if data.get("polished"):
+        state = "已润色"
+    elif style == "raw":
+        state = "未润色（原样）"
+    else:
+        state = "未润色（退回原样）"
+
+    out = [_frontmatter(meta, cfg, transcript, {"kind": "文案", "style": style_label, "chars": str(chars)}),
+           f"\n# {title}\n"]
+    out.append(f"\n> 文案 · {style_label} · {state} · {len(paras)} 段 · 约 {chars} 字\n")
+    if not data.get("polished") and data.get("note"):
+        out.append(f"\n> ⚠ 未润色：{data['note']}\n")
+    for para in paras:
+        out.append(f"\n{para}\n")
+
+    cuts = data.get("cuts") or []
+    if cuts:
+        out.append("\n## 整理说明\n\n")
+        for item in cuts:
+            out.append(f"- {item}\n")
+
+    keep = data.get("keep_as_is") or []
+    if keep:
+        out.append("\n## 保留原样\n\n")
+        for item in keep:
+            out.append(f"- {item}\n")
+
+    out.append(_footer(meta))
+    return "".join(out)
+
+
+def copy_txt(data: dict) -> str:
+    """纯文本版：不带 frontmatter 和 Markdown 标记，直接可复制粘贴。"""
+    paras = [str(p).strip() for p in (data.get("paras") or []) if str(p).strip()]
+    title = str(data.get("title") or "").strip()
+    head = f"{title}\n\n" if title else ""
+    return head + "\n\n".join(paras) + "\n"

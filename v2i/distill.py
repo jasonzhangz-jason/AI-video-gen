@@ -6,12 +6,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from . import render
-from .config import Config
+from .config import Config, ConfigError
 from .llm import LLM, LLMError, Usage, load_prompt
-from .normalize import build_chunks
+from .normalize import build_chunks, to_paragraphs
 from .util import fmt_ts, now_iso, parse_ts, read_json, write_json, write_text
 
-MODES = ("summary", "points", "article")
+MODES = ("summary", "points", "article", "copy")
+
+# 文案风格：原样（纯确定性）/ 轻度整理 / 口播稿
+COPY_STYLES = {
+    "raw": ("原样", None),
+    "light": ("轻度整理", "reduce_copy"),
+    "script": ("口播稿", "reduce_copy_script"),
+}
 _CITE_RE = re.compile(r"\[(\d{1,2}:\d{2}(?::\d{2})?)\]")
 
 
@@ -111,6 +118,45 @@ def _reduce_messages(mode: str, meta: dict, digest: str) -> list[dict]:
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
+def _copy_messages(meta: dict, paras: list[str], part_label: str = "",
+                   prompt: str = "reduce_copy") -> list[dict]:
+    system = load_prompt(prompt)
+    text = "\n\n".join(paras)
+    label = f"（{part_label}）" if part_label else ""
+    user = (
+        f"视频标题：{meta.get('title')}\n"
+        f"作者：{meta.get('uploader') or '未知'}\n\n"
+        f"逐字稿{label}：\n{text}\n\n只输出 JSON 对象。"
+    )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _polish_copy(llm, meta: dict, paras: list[str], prompt: str = "reduce_copy") -> dict:
+    """文案润色：短稿一次过；长稿按 9000 字分片，保序拼接。"""
+    text = "\n\n".join(paras)
+    if len(text) <= 12000:
+        return llm.chat_json(_copy_messages(meta, paras, prompt=prompt))
+
+    parts: list[str] = []
+    buffer = ""
+    for paragraph in paras:
+        if buffer and len(buffer) + len(paragraph) > 9000:
+            parts.append(buffer)
+            buffer = ""
+        buffer = f"{buffer}\n\n{paragraph}" if buffer else paragraph
+    if buffer:
+        parts.append(buffer)
+
+    merged: dict = {"title": "", "paras": [], "cuts": [], "keep_as_is": []}
+    for index, part in enumerate(parts, 1):
+        data = llm.chat_json(_copy_messages(meta, [part], f"第 {index}/{len(parts)} 段", prompt=prompt))
+        merged["title"] = merged["title"] or (data.get("title") or "")
+        merged["paras"].extend(str(p).strip() for p in (data.get("paras") or []) if str(p).strip())
+        merged["cuts"].extend(data.get("cuts") or [])
+        merged["keep_as_is"].extend(data.get("keep_as_is") or [])
+    return merged
+
+
 def _check_citations(text: str, chunks: list[dict], tolerance: float = 3.0) -> list[str]:
     """返回落在任何分块时间范围之外的引用时间码（即无法回溯的引用）。"""
     spans = [(float(c["start"]) - tolerance, float(c["end"]) + tolerance) for c in chunks]
@@ -138,14 +184,27 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
     )
     write_json(workdir / "chunks.json", chunks)
 
-    llm = LLM(cfg)
-    _log(f"  提炼模型：{cfg.model} @ {cfg.base_url}")
+    llm = None
+    llm_error = ""
+    try:
+        llm = LLM(cfg)
+    except ConfigError as exc:
+        llm_error = str(exc)
+        _log(f"  ! 没有可用的 LLM 配置：{exc}")
+        if "copy" not in modes:
+            raise
+        _log("    → 只产出「文案」的原始整理版（去时间码/口水词），其余模式跳过")
+    if llm is not None:
+        _log(f"  提炼模型：{cfg.model} @ {cfg.base_url}")
 
     # ---- map（带缓存、带并发）
     notes_dir = workdir / "notes"
     notes_dir.mkdir(parents=True, exist_ok=True)
     notes: list[dict] = [None] * len(chunks)  # type: ignore[list-item]
     todo: list[tuple[int, dict]] = []
+    if llm is None:
+        notes = [{"chunk_id": c["id"], "gist": "", "points": [], "quotes": [],
+                  "entities": [], "open_questions": []} for c in chunks]
     for idx, chunk in enumerate(chunks):
         cache = notes_dir / f"chunk-{chunk['id']:03d}.json"
         if cache.exists() and not force:
@@ -153,7 +212,7 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
         else:
             todo.append((idx, chunk))
 
-    if todo:
+    if todo and llm is not None:
         _log(f"  map 阶段：{len(todo)} 块待处理（并发 {cfg.workers}）")
         done = 0
         with ThreadPoolExecutor(max_workers=max(1, cfg.workers)) as pool:
@@ -171,7 +230,7 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
                 write_json(notes_dir / f"chunk-{chunk['id']:03d}.json", note)
                 done += 1
                 _log(f"    [{done}/{len(todo)}] 块 {chunk['id']} 完成（{len(note['points'])} 条要点）")
-    else:
+    elif llm is not None:
         _log(f"  map 阶段：{len(chunks)} 块全部命中缓存")
 
     digest = _digest(chunks, notes)
@@ -182,6 +241,7 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
     out_dir.mkdir(parents=True, exist_ok=True)
     outputs: dict[str, str] = {}
     invalid: dict[str, list[str]] = {}
+    skipped: list[str] = []
 
     for mode in modes:
         if mode == "summary":
@@ -190,6 +250,9 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
             if cached:
                 data = cached
                 _log("  summary 命中缓存")
+            elif llm is None:
+                skipped.append("summary")
+                continue
             else:
                 data = llm.chat_json(_reduce_messages("summary", meta, digest))
                 write_json(target, data)
@@ -205,6 +268,9 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
             if cached:
                 data = cached
                 _log("  points 命中缓存")
+            elif llm is None:
+                skipped.append("points")
+                continue
             else:
                 data = llm.chat_json(_reduce_messages("points", meta, digest))
                 write_json(target, data)
@@ -223,6 +289,9 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
                 if body.startswith("---"):
                     parts = body.split("---", 2)
                     body = parts[2].lstrip("\n") if len(parts) > 2 else body
+            elif llm is None:
+                skipped.append("article")
+                continue
             else:
                 body = llm.chat(_reduce_messages("article", meta, digest))
                 body = re.sub(r"^```(?:markdown|md)?\s*|\s*```$", "", body.strip())
@@ -230,6 +299,59 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
             write_text(path, md)
             outputs[mode] = str(path)
             invalid[mode] = _check_citations(md, chunks)
+
+        elif mode == "copy":
+            style = getattr(cfg, "copy_style", "light") or "light"
+            if style not in COPY_STYLES:
+                _log(f"  ! 未知文案风格 {style!r}，按 light 处理")
+                style = "light"
+            style_label, prompt_name = COPY_STYLES[style]
+            target = out_dir / "copy.json"
+            cached = read_json(target) if target.exists() and not force else None
+            if cached and cached.get("style") == style:
+                data = cached
+                _log(f"  copy 命中缓存（{style_label}）")
+            else:
+                base_paras = to_paragraphs(transcript["segments"])
+                data = {
+                    "title": meta.get("title") or "",
+                    "paras": base_paras,
+                    "polished": False,
+                    "style": style,
+                    "style_label": style_label,
+                    "cuts": [],
+                    "keep_as_is": [],
+                    "note": llm_error,
+                }
+                if prompt_name is None:
+                    _log("  文案：原样（不做润色）")
+                elif llm is None:
+                    _log(f"  文案：{style_label} 需要模型，缺配置 → 退回原样")
+                else:
+                    try:
+                        polished = _polish_copy(llm, meta, base_paras, prompt_name)
+                        paras = [str(p).strip() for p in (polished.get("paras") or []) if str(p).strip()]
+                        if paras:
+                            data.update({
+                                "title": polished.get("title") or data["title"],
+                                "paras": paras,
+                                "cuts": polished.get("cuts") or [],
+                                "keep_as_is": polished.get("keep_as_is") or [],
+                                "polished": True,
+                                "note": "",
+                            })
+                    except LLMError as exc:
+                        _log(f"  ! 文案改写失败，退回原样：{exc}")
+                        data["note"] = str(exc)
+                write_json(target, data)
+            md = render.copy_md(meta, data, cfg, transcript)
+            path = out_dir / "copy.md"
+            write_text(path, md)
+            write_text(out_dir / "copy.txt", render.copy_txt(data))
+            outputs[mode] = str(path)
+            invalid[mode] = []
+            tail = "已润色" if data.get("polished") else "未润色"
+            _log(f"  文案：{len(data.get('paras') or [])} 段 · {data.get('style_label') or style_label}（{tail}）")
 
     # ---- 汇总 + manifest
     for mode, bad in invalid.items():
@@ -242,9 +364,10 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
         "provider": cfg.provider,
         "chunks": len(chunks),
         "modes": list(modes),
-        "usage": llm.usage.as_dict(),
+        "usage": llm.usage.as_dict() if llm else {"calls": 0, "failures": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         "outputs": outputs,
         "invalid_citations": invalid,
+        "skipped": skipped,
     }
     manifest = read_json(workdir / "manifest.json", {}) or {}
     manifest["distill"] = summary_report
@@ -256,10 +379,13 @@ def distill(workdir: Path, cfg: Config, modes: tuple[str, ...] = MODES,
             "chunks": len(chunks),
             "points": sum(len(n.get("points") or []) for n in notes),
             "quotes": sum(len(n.get("quotes") or []) for n in notes),
-            "tokens": llm.usage.total_tokens,
+            "tokens": llm.usage.total_tokens if llm else 0,
         },
         "notes": notes,
     }
     write_json(out_dir / "digest.json", digest_json)
-    _log(f"  token 用量：{llm.usage.total_tokens}（{llm.usage.calls} 次调用）")
-    return {"outputs": outputs, "usage": llm.usage.as_dict(), "invalid": invalid}
+    if llm is not None:
+        _log(f"  token 用量：{llm.usage.total_tokens}（{llm.usage.calls} 次调用）")
+    usage = llm.usage.as_dict() if llm else {"calls": 0, "failures": 0, "prompt_tokens": 0,
+                                            "completion_tokens": 0, "total_tokens": 0}
+    return {"outputs": outputs, "usage": usage, "invalid": invalid, "skipped": skipped}

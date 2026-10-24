@@ -9,6 +9,8 @@
     "out/summary.md": "摘要卡",
     "out/points.md": "观点清单",
     "out/article.md": "长文",
+    "out/copy.md": "文案",
+    "out/copy.txt": "文案（纯文本）",
     "transcript.md": "逐字稿",
     "transcript.srt": "字幕",
     "out/digest.json": "结构化数据",
@@ -27,7 +29,7 @@
     return data;
   }
 
-  const escapeHtml = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const escapeHtml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   const basename = (p) => String(p || "").split(/[\\/]/).filter(Boolean).pop() || "";
 
   function fmtElapsed(sec) {
@@ -258,18 +260,21 @@
       if (s.source) bits.push(s.source === "subtitle" ? "字幕直取" : "本地转写");
       if (s.elapsed) bits.push(`用时 ${fmtElapsed(s.elapsed)}`);
       if (s.tokens) bits.push(`${s.tokens} tokens`);
+      if ((s.skipped || []).length) bits.push(`未提炼：${s.skipped.join(" / ")}`);
       $("#resultMeta").textContent = bits.join(" · ");
 
       const files = detail.files || [];
       const tabs = $("#tabs");
+      const FILE_TAB = "__files__";
       tabs.innerHTML = files.map((f, idx) =>
         `<button class="tab${idx === 0 ? " active" : ""}" data-file="${escapeHtml(f)}" type="button">${escapeHtml(FILE_LABELS[f] || f)}</button>`
-      ).join("");
+      ).join("") + `<button class="tab" data-file="${FILE_TAB}" type="button">所有文件</button>`;
       tabs.querySelectorAll(".tab").forEach((el) => {
         el.addEventListener("click", () => {
           tabs.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
           el.classList.add("active");
-          showFile(dir, el.dataset.file);
+          if (el.dataset.file === FILE_TAB) renderFiles(dir);
+          else showFile(dir, el.dataset.file);
         });
       });
 
@@ -283,6 +288,106 @@
       history.replaceState(null, "", `#run=${encodeURIComponent(dir)}`);
     } catch (err) {
       alert(`打开失败：${err.message}`);
+    }
+  }
+
+  function fmtSize(bytes) {
+    const n = Number(bytes || 0);
+    if (n < 1024) return n + " B";
+    if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1048576).toFixed(1) + " MB";
+  }
+
+  async function renderFiles(dir) {
+    const doc = $("#doc");
+    doc.innerHTML = `<p class="empty">读取文件列表…</p>`;
+    try {
+      const data = await api(`/api/files?dir=${encodeURIComponent(dir)}`);
+      const rows = (data.files || []).map((f) => {
+        const size = f.kind === "dir" ? (f.note || "") : fmtSize(f.size);
+        const actions = [];
+        if (f.kind !== "dir") {
+          actions.push(`<a class="ghost link" href="/api/download?dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(f.path)}">下载</a>`);
+        }
+        const badge = { text: "TXT", image: "IMG", audio: "AUDIO", video: "VIDEO", binary: "BIN", dir: "DIR" }[f.kind] || "FILE";
+        const clickable = f.kind !== "dir" && f.kind !== "binary";
+        return `<li class="file-row${clickable ? " clickable" : ""}" data-path="${escapeHtml(f.path)}">
+          <span class="fname"><span class="fkind k-${escapeHtml(f.kind)}">${badge}</span>${escapeHtml(f.path)}</span>
+          <span class="fmeta">${escapeHtml(size)}${f.mtime ? " · " + escapeHtml(f.mtime) : ""}</span>
+          <span class="factions">${actions.join("")}</span>
+        </li>`;
+      }).join("");
+      doc.innerHTML = `<p class="hint file-hint">点行内任意位置预览，右侧可直接下载（文本 / 图片 / 音视频都支持）</p>` + `<ul class="file-list">${rows}</ul>`;
+      doc.querySelectorAll(".file-row").forEach((row) => {
+        const target = (data.files || []).find((x) => x.path === row.dataset.path);
+        if (target && target.kind !== "dir") row.addEventListener("click", () => openPreview(dir, target));
+      });
+    } catch (err) {
+      doc.innerHTML = `<p class="empty">读取失败：${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  let previewEl = null;
+
+  function closePreview() {
+    if (!previewEl) return;
+    previewEl.remove();
+    previewEl = null;
+    document.removeEventListener("keydown", onPreviewKey);
+  }
+
+  function onPreviewKey(e) {
+    if (e.key === "Escape") closePreview();
+  }
+
+  async function openPreview(dir, file) {
+    closePreview();
+    const overlay = document.createElement("div");
+    overlay.className = "preview-overlay";
+    overlay.innerHTML = `
+      <div class="preview-box" role="dialog" aria-modal="true">
+        <div class="preview-head">
+          <span class="preview-name">${escapeHtml(file.path)}</span>
+          <span class="preview-meta">${escapeHtml(fmtSize(file.size))}${file.mtime ? " · " + escapeHtml(file.mtime) : ""}</span>
+          <a class="ghost link" href="/api/download?dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(file.path)}">下载</a>
+          <button class="ghost preview-close" type="button">关闭</button>
+        </div>
+        <div class="preview-body"><p class="empty">加载中…</p></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    previewEl = overlay;
+    document.addEventListener("keydown", onPreviewKey);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) closePreview(); });
+    overlay.querySelector(".preview-close").addEventListener("click", closePreview);
+
+    const body = overlay.querySelector(".preview-body");
+    const url = `/api/preview?dir=${encodeURIComponent(dir)}&name=${encodeURIComponent(file.path)}`;
+    try {
+      if (file.kind === "image") {
+        body.innerHTML = `<img class="preview-img" src="${url}" alt="${escapeHtml(file.path)}">`;
+      } else if (file.kind === "audio") {
+        body.innerHTML = `<div class="preview-media"><audio controls preload="metadata" src="${url}"></audio>
+          <p class="empty">${escapeHtml(file.path)}</p></div>`;
+      } else if (file.kind === "video") {
+        body.innerHTML = `<div class="preview-media"><video controls preload="metadata" src="${url}"></video></div>`;
+      } else if (file.kind === "text") {
+        const res = await fetch(url);
+        const text = await res.text();
+        if (!res.ok) throw new Error(text);
+        if (file.path.endsWith(".json")) {
+          let pretty = text;
+          try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (e) { /* 原样 */ }
+          body.innerHTML = `<pre class="raw">${escapeHtml(pretty)}</pre>`;
+        } else if (file.path.endsWith(".srt") || file.path.endsWith(".vtt")) {
+          body.innerHTML = `<pre class="raw">${escapeHtml(text)}</pre>`;
+        } else {
+          body.innerHTML = `<article class="doc">${renderMarkdown(text)}</article>`;
+        }
+      } else {
+        body.innerHTML = `<p class="empty">这类文件不能内嵌预览，点右上角下载。</p>`;
+      }
+    } catch (err) {
+      body.innerHTML = `<p class="empty">预览失败：${escapeHtml(err.message)}</p>`;
     }
   }
 
@@ -301,6 +406,27 @@
         doc.innerHTML = `<pre class="raw">${escapeHtml(text)}</pre>`;
       } else {
         doc.innerHTML = renderMarkdown(text);
+      }
+
+      // 文案/逐字稿：一键复制全文
+      if (name.endsWith(".txt") || name.endsWith(".md")) {
+        const bar = document.createElement("div");
+        bar.className = "doc-actions";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ghost";
+        btn.textContent = "复制全文";
+        btn.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(text);
+            btn.textContent = "已复制";
+          } catch (e) {
+            btn.textContent = "复制失败";
+          }
+          setTimeout(() => (btn.textContent = "复制全文"), 1500);
+        });
+        bar.appendChild(btn);
+        doc.prepend(bar);
       }
     } catch (err) {
       doc.innerHTML = `<p class="empty">读取失败：${escapeHtml(err.message)}</p>`;
@@ -404,6 +530,7 @@
       asr_model: $("#asrModel").value || undefined,
       language: $("#language").value || undefined,
       model: $("#model").value.trim() || undefined,
+      copy_style: $("#copyStyle") ? $("#copyStyle").value : undefined,
       prefer_subs: $("#preferSubs").checked,
       force: $("#force").checked,
     };
@@ -424,6 +551,7 @@
         if (options.asr_model) params.set("asr_model", options.asr_model);
         if (options.language) params.set("language", options.language);
         if (options.model) params.set("model", options.model);
+        if (options.copy_style) params.set("copy_style", options.copy_style);
         params.set("prefer_subs", options.prefer_subs ? "1" : "0");
         params.set("force", options.force ? "1" : "0");
 

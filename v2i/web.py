@@ -21,14 +21,31 @@ import webbrowser
 from contextlib import redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from . import __version__
 from .config import PROJECT_ROOT, Config, ConfigError
 from .util import now_iso, read_json, slugify, write_json
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-ALLOWED_SUFFIX = {".md", ".json", ".srt", ".txt"}
+ALLOWED_SUFFIX = {".md", ".json", ".srt", ".vtt", ".txt", ".log", ".csv", ".tsv"}
+TEXT_SUFFIX = ALLOWED_SUFFIX
+
+# 预览用的 content-type（媒体要正确才能让 <audio>/<video> 播）
+CONTENT_TYPES = {
+    ".md": "text/plain; charset=utf-8", ".txt": "text/plain; charset=utf-8",
+    ".log": "text/plain; charset=utf-8", ".srt": "text/plain; charset=utf-8",
+    ".json": "application/json; charset=utf-8", ".vtt": "text/vtt; charset=utf-8",
+    ".csv": "text/csv; charset=utf-8", ".tsv": "text/tab-separated-values; charset=utf-8",
+    ".html": "text/html; charset=utf-8", ".svg": "image/svg+xml",
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+    ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".wav": "audio/wav",
+    ".flac": "audio/flac", ".ogg": "audio/ogg", ".opus": "audio/ogg",
+    ".aac": "audio/aac", ".wma": "audio/x-ms-wma", ".amr": "audio/amr",
+    ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm",
+    ".mkv": "video/x-matroska", ".mov": "video/quicktime", ".ts": "video/mp2t",
+}
 MAX_JOBS = 40
 
 # 本地文件上传
@@ -210,6 +227,46 @@ threading.Thread(target=_worker, daemon=True, name="v2i-worker").start()
 # ---------------------------------------------------------------- 数据
 
 
+def _file_kind(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix in TEXT_SUFFIX:
+        return "text"
+    ctype = CONTENT_TYPES.get(suffix, "")
+    if ctype.startswith("image/"):
+        return "image"
+    if ctype.startswith("audio/"):
+        return "audio"
+    if ctype.startswith("video/"):
+        return "video"
+    return "binary"
+
+
+def _list_files(run_dir: Path) -> list[dict]:
+    """运行目录下的产物清单（两层：根目录 + out/ + notes/ 只列摘要）。"""
+    items: list[dict] = []
+    root = run_dir.resolve()
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        if rel.startswith("_"):
+            continue
+        # notes 下几十个分块文件只保留计数，避免列表把页面撑爆
+        if rel.startswith("notes/chunk-"):
+            continue
+        stat = path.stat()
+        items.append({
+            "path": rel,
+            "size": stat.st_size,
+            "kind": _file_kind(path),
+            "mtime": time.strftime("%m-%d %H:%M", time.localtime(stat.st_mtime)),
+        })
+    notes = len(list((root / "notes").glob("chunk-*.json"))) if (root / "notes").is_dir() else 0
+    if notes:
+        items.append({"path": "notes/", "size": notes, "kind": "dir", "mtime": "", "note": f"{notes} 块笔记"})
+    return items
+
+
 def _runs_dir(cfg: Config) -> Path:
     return cfg.runs_dir
 
@@ -234,6 +291,7 @@ def _run_summary(path: Path, cfg: Config) -> dict:
         "mtime": path.stat().st_mtime,
         "mtime_text": time.strftime("%m-%d %H:%M", time.localtime(path.stat().st_mtime)),
         "invalid": (manifest.get("distill") or {}).get("invalid_citations") or {},
+        "skipped": (manifest.get("distill") or {}).get("skipped") or [],
     }
 
 
@@ -245,6 +303,16 @@ def _safe_run_dir(name: str, cfg: Config) -> Path | None:
     if root not in target.parents:
         return None
     return target if target.is_dir() else None
+
+
+def _safe_any_file(run_dir: Path, name: str) -> Path | None:
+    name = (name or "").replace("\\", "/").lstrip("/")
+    if not name:
+        return None
+    target = (run_dir / name).resolve()
+    if run_dir.resolve() not in target.parents or not target.is_file():
+        return None
+    return target
 
 
 def _safe_file(run_dir: Path, name: str) -> Path | None:
@@ -282,6 +350,64 @@ class Handler(BaseHTTPRequestHandler):
 
     def _error(self, code: int, message: str) -> None:
         self._json({"error": message}, code)
+
+    def _send_media(self, path: Path) -> None:
+        """流式预览：支持 Range（浏览器播放音视频必须），文本/图片也能直接用。"""
+        size = path.stat().st_size
+        ctype = CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream")
+        start, end, status = 0, size - 1, 200
+        raw_range = self.headers.get("Range") or ""
+        if raw_range.startswith("bytes="):
+            try:
+                spec = raw_range[6:].split(",")[0]
+                first, _, last = spec.partition("-")
+                if first.strip():
+                    start = int(first)
+                    end = int(last) if last.strip() else size - 1
+                elif last.strip():
+                    start = max(0, size - int(last))
+                    end = size - 1
+                start = max(0, min(start, size - 1))
+                end = max(0, min(end, size - 1))
+                if start <= end:
+                    status = 206
+                else:
+                    start, end = 0, size - 1
+            except ValueError:
+                start, end, status = 0, size - 1, 200
+
+        length = end - start + 1
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(length))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Cache-Control", "no-store")
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        with path.open("rb") as fh:
+            fh.seek(start)
+            remaining = length
+            while remaining > 0:
+                chunk = fh.read(min(256 * 1024, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
+
+    def _send_download(self, path: Path) -> None:
+        size = path.stat().st_size
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(size))
+        self.send_header("Content-Disposition", f"attachment; filename*=UTF-8''{quote(path.name)}")
+        self.end_headers()
+        with path.open("rb") as fh:
+            while True:
+                chunk = fh.read(256 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
 
     def _file(self, path: Path, ctype: str) -> None:
         try:
@@ -323,6 +449,27 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(job or {"error": "job not found"}, 200 if job else 404)
             if route == "/api/run":
                 return self._json(self._run_detail((query.get("dir") or [""])[0]))
+            if route == "/api/files":
+                run_dir = _safe_run_dir((query.get("dir") or [""])[0], self.cfg)
+                if not run_dir:
+                    return self._error(404, "run not found")
+                return self._json({"dir": run_dir.name, "files": _list_files(run_dir)})
+            if route == "/api/preview":
+                run_dir = _safe_run_dir((query.get("dir") or [""])[0], self.cfg)
+                if not run_dir:
+                    return self._error(404, "run not found")
+                target = _safe_any_file(run_dir, (query.get("name") or [""])[0])
+                if not target:
+                    return self._error(404, "file not found")
+                return self._send_media(target)
+            if route == "/api/download":
+                run_dir = _safe_run_dir((query.get("dir") or [""])[0], self.cfg)
+                if not run_dir:
+                    return self._error(404, "run not found")
+                target = _safe_any_file(run_dir, (query.get("name") or [""])[0])
+                if not target:
+                    return self._error(404, "file not found")
+                return self._send_download(target)
             if route == "/api/file":
                 run_dir = _safe_run_dir((query.get("dir") or [""])[0], self.cfg)
                 if not run_dir:
@@ -402,8 +549,9 @@ class Handler(BaseHTTPRequestHandler):
         if not run_dir:
             return {"error": "run not found"}
         files = []
-        for rel in ("out/summary.md", "out/points.md", "out/article.md",
-                    "transcript.md", "transcript.srt", "out/digest.json", "meta.json", "manifest.json"):
+        for rel in ("out/summary.md", "out/points.md", "out/article.md", "out/copy.md",
+                    "out/copy.txt", "transcript.md", "transcript.srt", "out/digest.json",
+                    "meta.json", "manifest.json"):
             if (run_dir / rel).exists():
                 files.append(rel)
         return {"dir": name, "files": files, "summary": _run_summary(run_dir, self.cfg)}
@@ -417,6 +565,7 @@ class Handler(BaseHTTPRequestHandler):
             language=body.get("language") or None,
             model=body.get("model") or None,
             prefer_subs=bool(prefer) if prefer is not None else None,
+            copy_style=body.get("copy_style") or None,
         )
 
     def _new_job(self, body: dict, kind: str, url: str = "",
@@ -500,6 +649,7 @@ class Handler(BaseHTTPRequestHandler):
             "model": (query.get("model") or [""])[0],
             "force": (query.get("force") or ["0"])[0] in ("1", "true", "yes"),
             "prefer_subs": (query.get("prefer_subs") or ["1"])[0] not in ("0", "false"),
+            "copy_style": (query.get("copy_style") or [""])[0],
         }
         result = self._new_job(body, "local", file_path=target, file_name=name)
         result["file"] = name

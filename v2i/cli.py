@@ -42,10 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="一条命令跑完整流水线")
     run.add_argument("url", help="视频链接（公开可访问）")
-    run.add_argument("--mode", default="all", help="summary | points | article | all，可逗号组合")
+    run.add_argument("--mode", default="all", help="summary | points | article | copy | all，可逗号组合")
     run.add_argument("--language", help="指定语言 zh/en，默认自动检测")
     run.add_argument("--asr-model", help="tiny | base | small | medium | large-v3 | turbo")
     run.add_argument("--no-subs", action="store_true", help="忽略原生字幕，强制下载音频转写")
+    run.add_argument("--copy-style", choices=["raw", "light", "script"], help="文案风格：raw 原样 / light 轻度整理 / script 口播稿")
     common(run)
 
     fetch = sub.add_parser("fetch", help="只做下载（字幕优先，无字幕则下音频）")
@@ -62,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     dist = sub.add_parser("distill", help="只做提炼（已有 transcript.json 的运行目录）")
     dist.add_argument("run_dir")
     dist.add_argument("--mode", default="all")
+    dist.add_argument("--copy-style", choices=["raw", "light", "script"])
     common(dist)
 
     rend = sub.add_parser("render", help="只重渲染 Markdown（不调用大模型，用 out/*.json 的缓存结果）")
@@ -73,6 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--mode", default="all")
     batch.add_argument("--language")
     batch.add_argument("--asr-model")
+    batch.add_argument("--copy-style", choices=["raw", "light", "script"])
     common(batch)
 
     doc = sub.add_parser("doctor", help="环境自检")
@@ -87,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _config(args) -> Config:
     overrides = {}
-    for field in ("model", "provider", "language", "asr_model"):
+    for field in ("model", "provider", "language", "asr_model", "copy_style"):
         value = getattr(args, field, None)
         if value:
             overrides[field] = value
