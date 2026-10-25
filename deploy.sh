@@ -16,6 +16,7 @@
 #    ./deploy.sh --skip-deps          # 依赖已装好，只重启
 #    ./deploy.sh --no-start           # 只准备环境，不启动
 #    ./deploy.sh --stop               # 停掉 nohup 起的服务
+#    ./deploy.sh --force              # 端口被占用时直接杀掉占用进程
 #    ./deploy.sh --dry-run            # 只打印将执行的命令
 # =============================================================================
 set -euo pipefail
@@ -33,6 +34,7 @@ INSTALL_SERVICE=0
 NO_START=0
 DRY_RUN=0
 DO_STOP=0
+FORCE_PORT=0
 SERVICE_NAME="${SERVICE_NAME:-v2i}"
 
 usage() {
@@ -50,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     --service) INSTALL_SERVICE=1; shift ;;
     --no-start) NO_START=1; shift ;;
     --stop) DO_STOP=1; shift ;;
+    --force) FORCE_PORT=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "未知参数：$1" >&2; usage; exit 1 ;;
@@ -119,6 +122,81 @@ run "mkdir -p \"$ROOT/.runtime\" \"$ROOT/runs\" \"$ROOT/.cookies\""
 run "chmod +x \"$ROOT/v2i.sh\" \"$ROOT/deploy.sh\""
 
 # ---------------------------------------------------------------- 4. 启动
+port_pids() {
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltnpH "sport = :$PORT" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | sort -u
+  fi
+}
+
+port_busy() {
+  [[ -n "$(port_pids)" ]] && return 0
+  # 没有 ss/lsof 时至少能判断"通不通"（bash 内建 /dev/tcp）
+  if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
+    exec 3>&- 2>/dev/null || true
+    return 0
+  fi
+  return 1
+}
+
+check_port() {
+  port_busy || return 0
+  local pids owner
+  pids="$(port_pids | tr '\n' ' ')"
+  owner="$(command -v ss >/dev/null 2>&1 && ss -ltnpH "sport = :$PORT" 2>/dev/null | head -n 1 || true)"
+  printf '\n[!] 端口 %s 已被占用（pid: %s）\n' "$PORT" "${pids:-未知}"
+  [[ -n "$owner" ]] && info "$owner"
+
+  if [[ -z "${pids// /}" ]]; then
+    info "没装 ss/lsof，只能确认端口被占，查不到 PID"
+    if [[ $FORCE_PORT -eq 1 ]]; then
+      die "查不到占用进程，无法自动结束。请手动处理：ss -ltnp | grep :$PORT"
+    fi
+    if [[ -t 0 ]]; then
+      local ans=""
+      read -r -p "    仍然尝试启动（可能失败）？[y/N] > " ans || true
+      [[ "${ans:-n}" =~ ^[yY] ]] && return 0
+    fi
+    die "端口 $PORT 被占用。装 ss（iproute2）或 lsof 后重试，或换端口：./deploy.sh --port $((PORT + 1))"
+  fi
+
+  if [[ $FORCE_PORT -eq 1 ]]; then
+    info "--force：结束占用进程 ${pids:-}"
+    for pid in $pids; do kill -9 "$pid" 2>/dev/null || true; done
+    sleep 1
+    if port_busy; then
+      die "端口 $PORT 仍被占用（可能权限不足），请手动处理"
+    fi
+    info "端口 $PORT 已释放"
+    return 0
+  fi
+
+  if [[ -t 0 ]]; then
+    local answer=""
+    read -r -p "    杀掉它并继续启动？[y] 杀掉继续 / [n] 退出 / [p] 换端口 > " answer || true
+    case "${answer:-n}" in
+      y|Y|yes)
+        for pid in $pids; do kill -9 "$pid" 2>/dev/null || true; done
+        sleep 1
+        port_busy && die "端口 $PORT 仍被占用，请手动处理"
+        info "端口 $PORT 已释放"
+        return 0
+        ;;
+      p|P)
+        info "换端口：./deploy.sh --port $((PORT + 1))"
+        exit 1
+        ;;
+      *)
+        info "已取消启动"
+        exit 1
+        ;;
+    esac
+  fi
+
+  die "端口 $PORT 被占用，非交互环境不会自动杀进程。加 --force 顶掉它，或换端口：./deploy.sh --port $((PORT + 1))"
+}
+
 start_nohup() {
   LOG="$ROOT/.runtime/web.log"
   PIDFILE="$ROOT/.runtime/web.pid"
@@ -173,6 +251,7 @@ Environment=PYTHONUNBUFFERED=1
 WantedBy=multi-user.target
 EOF
   info "已写入 $UNIT"
+  check_port
   run "systemctl daemon-reload"
   run "systemctl enable --now \"$SERVICE_NAME\""
   health_check || true
@@ -182,6 +261,7 @@ elif [[ $NO_START -eq 1 ]]; then
   info "手动启动：$ROOT/v2i.sh web --host $HOST --port $PORT"
 else
   step "启动服务（nohup 后台）"
+  check_port
   start_nohup
   health_check
 fi

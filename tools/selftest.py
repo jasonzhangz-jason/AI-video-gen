@@ -121,6 +121,21 @@ def test_citations():
     print(f"✓ 引用校验（越界命中：{bad}）")
 
 
+
+def test_cmd_line_endings() -> None:
+    """批处理必须是 CRLF：LF-only 会让 cmd.exe 把行拆错（报 'TH' 不是内部或外部命令）。"""
+    root = Path(__file__).resolve().parents[1]
+    bad = []
+    for path in list(root.glob("*.cmd")) + list(root.glob("*.bat")):
+        data = path.read_bytes()
+        bare_lf = 0
+        for i, byte in enumerate(data):
+            if byte == 0x0A and (i == 0 or data[i - 1] != 0x0D):
+                bare_lf += 1
+        if bare_lf:
+            bad.append(f"{path.name}（{bare_lf} 个裸 LF）")
+    assert not bad, "这些批处理文件用了 LF 换行，Windows 上会执行异常：" + "、".join(bad)
+
 def main():
     import tempfile
 
@@ -132,6 +147,7 @@ def main():
         test_chunks()
         test_json()
         test_citations()
+    test_cmd_line_endings()
     print("\n全部通过。")
 
 

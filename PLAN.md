@@ -880,3 +880,26 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 - `start.cmd` 改为直接读 `requirements.txt`，与 Linux 依赖保持一致；`.env.example` 补 V2I_KEEP_VIDEO / EXTRACT_AUDIO / DOUYIN_DOWNLOADER / SEPARATE / SEPARATE_PROBE 等新键。
 - 实测（Git Bash 模拟）：`bash -n` 语法通过；`--dry-run` 输出正确；真实跑 `deploy.sh --port 8899 --skip-deps` → 健康检查第 1 次通过、`.runtime/web.pid` 写入、`.runtime/web.log` 有启动横幅；`--stop` 正确停掉并打印 pid。
 
+### 10.75 修 start.cmd 执行异常（LF 换行导致）（2026-08-15 追加）
+
+- 现象：重写 start.cmd 后运行报 `'TH' 不是内部或外部命令` / `'not' 不是…`，多行被拆断。
+- 根因：新版本是 **LF 换行**（PowerShell here-string 写出），而 cmd.exe 解析批处理要求 **CRLF**；LF-only 会让它按错误的字节偏移切行。
+- 修复：`git checkout -- start.cmd` 恢复 CRLF 版本（内容已经是读 `requirements.txt` 的版本），实测启动成功、`/api/status` 正常。
+- 防回归：`tools/selftest.py` 新增 `test_cmd_line_endings()` —— 扫描仓库里所有 `*.cmd/*.bat`，有裸 LF 直接断言失败（已用故意造坏的文件验证能抓到）。
+
+### 10.76 端口占用时给选择（杀进程 / 退出 / 换端口）（2026-08-15 追加）
+
+- `v2i/web.py` 新增 `_port_owner()`（Windows: `netstat -ano` + `tasklist`；POSIX: `lsof -t` + `ps`）、`_kill_pid()`（`taskkill /F` / `kill -9`）、`_startup_conflict()`。
+- `serve(..., force=False) -> int`：端口被占时
+  - 交互（`sys.stdin.isatty()`）：打印占用进程，问 `[y] 杀掉并继续 / [n] 退出 / [p] 换端口`；
+  - 非交互：拒绝启动并提示加 `--force`，**不会自动杀进程**；
+  - `--force`：直接结束占用者再绑定，仍绑定失败则退出码 1。
+  - 拒绝启动时返回 1（命令行能感知），`cli` 透传。
+- `v2i web --force` 新增开关。
+- `deploy.sh`：新增 `--force`、`port_pids()`（`ss -ltnpH` 或 `lsof -t`）、`port_busy()`（无工具时用 bash `/dev/tcp` 兜底）、`check_port()`（询问 / 强杀 / 拒绝），在 nohup 与 systemd 两条启动路径前都执行。
+- 实测：
+  - 非交互 + 占用 → 提示 PID 并退出码 1；
+  - 交互回答 y → 结束 PID 2512、端口释放、继续启动；回答 n → 进程保留、返回 False；
+  - `v2i web --port 8899 --force` → 杀掉占位的 `http.server`，8899 正常提供服务；
+  - `deploy.sh` 无 ss/lsof 时只确认"被占用"并拒绝，不会乱杀。
+

@@ -100,6 +100,8 @@ def build_parser() -> argparse.ArgumentParser:
     web.add_argument("--port", type=int, default=8765, help="端口（默认 8765）")
     web.add_argument("--host", default="127.0.0.1", help="监听地址（默认只监听本机）")
     web.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
+    web.add_argument("--force", action="store_true",
+                     help="端口被占用时直接结束占用进程再启动（默认会先问）")
     return parser
 
 
@@ -473,8 +475,8 @@ def _cmd_doctor(args) -> int:
 def _cmd_web(args) -> int:
     from .web import serve
 
-    serve(port=args.port, host=args.host, open_browser=not args.no_browser)
-    return 0
+    return serve(port=args.port, host=args.host, open_browser=not args.no_browser,
+                 force=getattr(args, "force", False)) or 0
 
 
 # ---------------------------------------------------------------- 入口

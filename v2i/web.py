@@ -13,9 +13,12 @@ from __future__ import annotations
 import difflib
 import io
 import json
+import os
 import shutil
+import sys
 import queue
 import socket
+import subprocess
 import threading
 import time
 import traceback
@@ -1363,18 +1366,131 @@ def _port_in_use(host: str, port: int) -> bool:
         return sock.connect_ex((host, port)) == 0
 
 
-def serve(port: int = 8765, host: str = "127.0.0.1", open_browser: bool = True) -> None:
+def _port_owner(port: int) -> list[dict]:
+    """尽力查出占用端口的进程：pid / 名字 / 命令行。查不到就返回空列表。"""
+    import re as _re
+
+    owners: list[dict] = []
+    try:
+        if os.name == "nt":
+            out = subprocess.run(["netstat", "-ano", "-p", "tcp"], capture_output=True,
+                                 text=True, timeout=8, encoding="utf-8", errors="replace").stdout
+            pids = set()
+            for line in out.splitlines():
+                parts = line.split()
+                if len(parts) >= 5 and parts[0].upper() == "TCP" and parts[1].endswith(f":{port}"):
+                    pids.add(parts[-1])
+            for pid in pids:
+                name = ""
+                try:
+                    info = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                                          capture_output=True, text=True, timeout=8,
+                                          encoding="utf-8", errors="replace").stdout.strip()
+                    if info and "," in info:
+                        name = info.split(",")[0].strip('"')
+                except OSError:
+                    pass
+                owners.append({"pid": pid, "name": name})
+        else:
+            out = subprocess.run(["sh", "-c", f"lsof -nP -iTCP:{port} -sTCP:LISTEN -t 2>/dev/null || true"],
+                                 capture_output=True, text=True, timeout=8,
+                                 encoding="utf-8", errors="replace").stdout
+            for pid in {ln.strip() for ln in out.splitlines() if ln.strip()}:
+                name = ""
+                try:
+                    name = subprocess.run(["ps", "-p", pid, "-o", "comm="], capture_output=True,
+                                          text=True, timeout=8, encoding="utf-8",
+                                          errors="replace").stdout.strip()
+                except OSError:
+                    pass
+                owners.append({"pid": pid, "name": name})
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return owners
+
+
+def _kill_pid(pid: str) -> bool:
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, timeout=10)
+        else:
+            subprocess.run(["kill", "-9", str(pid)], capture_output=True, timeout=10)
+        time.sleep(0.6)
+        return True
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _startup_conflict(port: int, host: str) -> bool:
+    """端口被占用时询问用户；返回 True = 可以继续启动。"""
+    owners = _port_owner(port)
+    print(f"\n⚠ 端口 {port} 已经被占用")
+    if owners:
+        for item in owners:
+            who = f"（{item['name']}）" if item.get("name") else ""
+            print(f"   PID {item['pid']}{who}")
+    print(f"   如果是已经开着的 v2i，直接访问 http://{host}:{port} 就行")
+
+    interactive = sys.stdin.isatty()
+    if not interactive:
+        print("   非交互环境，不会自动杀进程。")
+        print(f"   要顶掉它：python -m v2i web --port {port} --force    换个端口：--port {port + 1}")
+        return False
+
+    while True:
+        try:
+            answer = input("\n要杀掉上面的进程并继续启动吗？[y] 杀掉并继续  [n] 退出  [p] 换端口 > ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return False
+        if answer in ("y", "yes", "1"):
+            ok = True
+            if not owners:
+                print("   查不到占用者，直接尝试重新绑定端口 …")
+                return True
+            for item in owners:
+                print(f"   正在结束 PID {item['pid']} …")
+                ok = _kill_pid(item["pid"]) and ok
+            time.sleep(0.5)
+            if _port_in_use(host, port):
+                print("   ⚠ 端口仍被占用（可能有子进程或权限不足）。已放弃启动。")
+                return False
+            print(f"   端口 {port} 已释放")
+            return True
+        if answer in ("n", "no", "q", ""):
+            print("   已取消启动")
+            return False
+        if answer in ("p", "port"):
+            print(f"   换端口：python -m v2i web --port {port + 1}")
+            return False
+
+
+def serve(port: int = 8765, host: str = "127.0.0.1", open_browser: bool = True,
+          force: bool = False) -> int:
+    """返回 0 = 正常退出（Ctrl+C / 拒绝启动时返回 1）。"""
     Handler.cfg = Config.from_env()
     if _port_in_use(host, port):
-        print(f"⚠ 端口 {port} 已经被占用（可能已经开着一个 v2i web）")
-        print(f"   直接访问 http://{host}:{port} ，或换端口：python -m v2i web --port {port + 1}")
-        return
+        if force:
+            owners = _port_owner(port)
+            if not owners:
+                print(f"⚠ 端口 {port} 被占用，但查不到占用进程；请手动处理")
+                return 1
+            for item in owners:
+                who = f"（{item['name']}）" if item.get("name") else ""
+                print(f"   结束 PID {item['pid']}{who}")
+                _kill_pid(item["pid"])
+            time.sleep(0.6)
+            if _port_in_use(host, port):
+                print(f"⚠ 端口 {port} 仍然被占用，无法启动")
+                return 1
+        elif not _startup_conflict(port, host):
+            return 1
     try:
         server = _Server((host, port), Handler)
     except OSError as exc:
         print(f"⚠ 端口 {port} 起不来：{exc}")
         print(f"   换一个端口再试：python -m v2i web --port {port + 1}")
-        return
+        return 1
     url = f"http://{host}:{port}"
     print(f"v2i web 已启动：{url}")
     print(f"运行目录：{Handler.cfg.runs_dir}")
@@ -1389,3 +1505,4 @@ def serve(port: int = 8765, host: str = "127.0.0.1", open_browser: bool = True) 
         print("\n已停止")
     finally:
         server.server_close()
+    return 0
