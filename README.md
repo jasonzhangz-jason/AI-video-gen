@@ -151,6 +151,10 @@ v2i.cmd            # 不带参数双击 = 同一个效果；带参数 = 当 CLI 
 
 ![分享文案识别](docs/gui-share-text.png)
 
+输入框是多行文本框，整段分享会自动换行、随内容长高（最多 9 行）：
+
+![多行输入](docs/gui-input-long.png)
+
 ![高级选项](docs/gui-advanced-fields.png)
 
 ![抖音下载器](docs/gui-douyin-tools.png)

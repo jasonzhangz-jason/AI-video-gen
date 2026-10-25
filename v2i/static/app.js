@@ -1953,6 +1953,15 @@
     return m ? m[0].replace(/[，。！？、；：,.!?;:]+$/, "") : "";
   }
 
+  function autoGrowUrl() {
+    const el = $("#url");
+    if (!el || el.tagName !== "TEXTAREA") return;
+    el.style.height = "auto";
+    const line = 22;
+    const max = line * 9;
+    el.style.height = Math.min(Math.max(el.scrollHeight, line * 3), max) + "px";
+  }
+
   function updateUrlHint() {
     const hint = $("#urlHint");
     const input = $("#url");
@@ -2107,7 +2116,7 @@
   $("#cookieFile").addEventListener("change", (e) => { if (e.target.files[0]) uploadCookies(e.target.files[0]); e.target.value = ""; });
   $("#cookieClear").addEventListener("click", () => { if (confirm("清除已上传的 cookies？")) clearCookies(); });
   $("#platform").addEventListener("change", renderPlatformNote);
-  $("#url").addEventListener("input", () => { updateUrlHint();
+  $("#url").addEventListener("input", () => { updateUrlHint(); autoGrowUrl();
     if ($("#platform").value !== "auto") return;
     const found = detectPlatform($("#url").value.trim());
     if (found) {

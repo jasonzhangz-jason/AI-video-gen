@@ -862,3 +862,10 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 - GUI 高级选项新增复选框「分离前不试分（直接跑全片，省约 30 秒）」+ 说明行「默认先切 45 秒试分…」；`/api/start` 与上传 query 透传 `separate_probe`；CLI 加 `--no-separate-probe`。
 - 实测：默认 `separate_probe=True`，`V2I_SEPARATE_PROBE=0` 时为 False；复选框默认不勾、无 JS 异常。
 
+### 10.73 录入框改成多行文本框（2026-08-15 追加）
+
+- `#url` 从 `<input type="text">` 换成 `<textarea rows="3">`：整段分享文案不再被单行截断，自动换行。
+- CSS：`min-height: 84px`、`max-height: 208px`、`resize: vertical`、`line-height: 1.55`。
+- JS `autoGrowUrl()`：输入时按 `scrollHeight` 长高，3 行起步、最多 9 行（超过就内部滚动）。
+- 实测：106 字分享文案 87px 高无溢出；297 字（重复 3 遍 + 话题）自动换成 3 行、仍完整可见、提示行显示识别出的短链。
+
