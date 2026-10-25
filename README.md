@@ -100,9 +100,11 @@ v2i.cmd            # 不带参数双击 = 同一个效果；带参数 = 当 CLI 
 
 - **两种素材来源**：贴链接，或**把本地音频/视频拖进来**（mp3 / m4a / wav / mp4 / mkv …，最大 4GB）。
 - **保留原视频**：新建任务页模式那排的「保留原视频」**默认就是勾上的**，会下载带画面的 mp4（默认 ≤720p），文件列表里标 `VIDEO`，点开直接在弹层里播放、也可下载；转写直接从 mp4 的音轨解，不用额外再下一份音频。
-- **高级选项**：ASR 模型、语言、文案风格、浏览器 Cookies、代理、LLM 模型，以及整宽一行的「登录态 cookies」（可直接一键从浏览器获取）。
+- **高级选项**：ASR 模型、语言、文案风格、抖音下载器、浏览器 Cookies、代理、LLM 模型；登录态 cookies 已统一收进【系统配置】。
 - **一键获取 cookies**：高级选项里点「一键从浏览器获取」→ 选 Chrome / Edge / Firefox → 列出读到的**每一条 cookie**（域名 / 名称 / 值 / 过期时间，表头可点击排序；值过长会省略，悬停看全文），可以逐条勾选、按域名过滤、一键全选 → 只有勾选的才会写进 `cookies.txt`（不确认不动现有配置）；Chrome/Edge 在部分机器上因 App-Bound 加密读不出来，会直接说明原因并建议用扩展导出。
 
+- **整段分享文案直接贴**：抖音/快手的分享通常是「文案 + 短链 + 复制提示」，v2i 会自动抽出里面的 http(s) 链接（`util.extract_url`），不用手动删干净。
+- **抖音链接**：yt-dlp 过不了 a_bogus 签名，v2i 的兜底顺序是 **浏览器自动化（本机 Chrome + CDP，默认首选）→ f2 → douyin-downloader → 自定义命令**，逐个尝试直到拿到视频；浏览器方案是打开页面让它自己算签名，再从 `/aweme/v1/web/aweme/detail/` 响应里取真实播放地址。高级选项「抖音下载器」可选择固定某一个，命令行 `--douyin-downloader browser|f2|douyin-downloader`。
 - **补下原视频**：老任务当初只下了音频也没关系——结果卡片右上角有「补下原视频」，点一下就在后台补下载并刷新文件列表，逐字稿和提炼产物都不动。
 - **平台下拉 + 先探测**：13 个平台可选（B 站 / 抖音 / 快手 / 小红书 / 微博 / 西瓜 / YouTube / X / TikTok / Instagram / Vimeo / 播客…），贴链接会自动识别；点「先探测」不下载就能看到标题、时长、有没有字幕、多少个格式——失败也会直接告诉你缺 cookie 还是缺代理。
 - **Cookies / 代理**：高级选项里可选用浏览器 cookies（Chrome / Edge / Firefox）或填代理地址，不必改 `.env`。
@@ -131,9 +133,23 @@ v2i.cmd            # 不带参数双击 = 同一个效果；带参数 = 当 CLI 
 
 ![一键获取 cookies](docs/gui-cookies-list.png)
 
+![系统配置里的 cookies](docs/gui-cookies-settings.png)
+
+![查看已导入的 cookies](docs/gui-cookies-view.png)
+
+系统配置底部三个动作按钮（保存并生效 / 测试大模型连接 / 清除 API Key）样式一致。
+
+![设置按钮](docs/gui-settings-buttons.png)
+
 ![文件含义提示](docs/gui-file-tips.png)
 
+粘贴整段分享文案时会自动识别其中的链接：
+
+![分享文案识别](docs/gui-share-text.png)
+
 ![高级选项](docs/gui-advanced-fields.png)
+
+![抖音下载器](docs/gui-douyin-tools.png)
 
 ![高级选项](docs/gui-advanced.png)
 
@@ -218,7 +234,7 @@ v2i.cmd            # 不带参数双击 = 同一个效果；带参数 = 当 CLI 
 
 **给 cookie 的三条路**（抖音/小红书/X 基本绕不开）：
 
-1. **GUI 直接上传**（最省事）：高级选项 →「登录态 cookies」→ 上传 `cookies.txt`，存到项目 `.cookies/cookies.txt`，**下一条任务立即生效，不用重启**，也能一键清除；
+1. **GUI 直接上传**（最省事）：【系统配置】→「登录态 cookies」→ 上传 `cookies.txt`，存到项目 `.cookies/cookies.txt`，**下一条任务立即生效，不用重启**；点「查看」能列出当前已导入的每一条（域名/名称/值/过期，可排序过滤）；
 2. **浏览器扩展导出** `cookies.txt`（Netscape 格式），路径写进 `.env` 的 `V2I_COOKIES=...`；
 3. **直接读浏览器**：GUI 高级选项选 Chrome / Edge / Firefox，或命令行 `--cookies-from-browser chrome`。
 

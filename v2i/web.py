@@ -27,7 +27,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from . import __version__
 from .config import DEFAULT_COOKIES, PROJECT_ROOT, Config, ConfigError
-from .util import now_iso, read_json, slugify, write_json
+from .util import extract_url, now_iso, read_json, slugify, write_json
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 ALLOWED_SUFFIX = {".md", ".json", ".srt", ".vtt", ".txt", ".log", ".csv", ".tsv"}
@@ -149,6 +149,21 @@ def _confirm_browser_cookies(keep: list[int] | None) -> dict:
     out.save(ignore_discard=True, ignore_expires=True)
     PENDING_COOKIES.unlink(missing_ok=True)
     return {"ok": True, "imported": len(cookies), "status": _cookie_status()}
+
+
+def _list_saved_cookies() -> dict:
+    """把已导入的 cookies.txt 解析成列表，给界面查看用。"""
+    from http.cookiejar import MozillaCookieJar
+
+    if not DEFAULT_COOKIES.exists():
+        return {"present": False, "count": 0, "items": []}
+    jar = MozillaCookieJar(str(DEFAULT_COOKIES))
+    try:
+        jar.load(ignore_discard=True, ignore_expires=True)
+    except (OSError, ValueError) as exc:
+        return {"error": f"读取 cookies.txt 失败：{exc}"}
+    items = [_cookie_row(i, c) for i, c in enumerate(jar)]
+    return {"present": True, "count": len(items), "items": items}
 
 
 def _grab_browser_cookies(browser: str) -> dict:
@@ -638,6 +653,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(_cookie_status())
             if route == "/api/settings":
                 return self._json(self._settings_view())
+            if route == "/api/cookies/list":
+                return self._json(_list_saved_cookies())
+            if route == "/api/douyin_tools":
+                from . import douyin as douyin_mod
+
+                return self._json({
+                    "tools": douyin_mod.list_tools(),
+                    "selected": (query.get("selected") or [""])[0],
+                    "hint": douyin_mod.INSTALL_HINT,
+                })
             if route == "/api/usage":
                 from . import usage as usage_mod
 
@@ -842,6 +867,7 @@ class Handler(BaseHTTPRequestHandler):
             prefer_subs=bool(prefer) if prefer is not None else None,
             copy_style=body.get("copy_style") or None,
             keep_video=bool(body.get("keep_video")) or None,
+            douyin_downloader=str(body.get("douyin_downloader") or "") or None,
             cookies_from_browser=body.get("cookies_from_browser") or None,
             proxy=body.get("proxy") or None,
         )
@@ -850,7 +876,7 @@ class Handler(BaseHTTPRequestHandler):
         from . import fetch as fetch_mod
         from . import platforms as platforms_mod
 
-        url = (query.get("url") or [""])[0].strip()
+        url = extract_url((query.get("url") or [""])[0])
         if not url:
             return {"ok": False, "error": "缺少 url"}
         platform_id = (query.get("platform") or ["auto"])[0]
@@ -859,9 +885,40 @@ class Handler(BaseHTTPRequestHandler):
             cookies_from_browser=(query.get("cookies_from_browser") or [""])[0] or None,
             proxy=(query.get("proxy") or [""])[0] or None,
         )
+        # 抖音这类"签名接口不可用但下载器能接"的，直接跳过 yt-dlp 探测（省 5–10 秒）
+        if "douyin" in url.lower() and fetch_mod.douyin_fallback_ready(url, cfg):
+            from . import douyin as douyin_mod
+
+            found = douyin_mod.find_downloader(getattr(cfg, "douyin_downloader", ""))
+            label = douyin_mod.TOOL_LABELS.get(found[0], found[0]) if found else ""
+            resolved = fetch_mod.resolve_douyin(url, cfg)
+            return {"ok": True, "note": f"抖音签名接口不可用，将用「{label}」下载后再转写",
+                    "hint": hint, "platform": platform_id, "via": found[0] if found else "",
+                    "resolved": resolved}
+
+        # 需要 cookies 的平台：先看 cookies.txt 有没有对应域名，避免白等
+        missing = fetch_mod.missing_cookie_domain(url, cfg)
+        if missing:
+            platform_label = {"douyin": "抖音", "kuaishou": "快手", "xiaohongshu": "小红书",
+                              "tiktok": "TikTok", "instagram": "Instagram", "x": "X"}.get(
+                platform_id if platform_id != "auto" else (platforms_mod.match(url) or {}).get("id", ""),
+                "该平台")
+            return {"ok": False,
+                    "error": f"{platform_label} 需要登录态 cookies，但当前 cookies.txt 里没有 {missing} 的条目"
+                             f"——到「系统配置 → 登录态 cookies」一键获取或上传后再探测。",
+                    "hint": hint, "platform": platform_id, "action": "cookies_file"}
+
         try:
             info = fetch_mod.probe(url, cfg, fast=True)
         except Exception as exc:  # noqa: BLE001
+            # 抖音这类"签名过不去但下载器能接"的情况：探针报"可下载"而不是失败
+            if fetch_mod.douyin_fallback_ready(url, cfg):
+                from . import douyin as douyin_mod
+
+                found = douyin_mod.find_downloader(getattr(cfg, "douyin_downloader", ""))
+                label = douyin_mod.TOOL_LABELS.get(found[0], found[0]) if found else ""
+                return {"ok": True, "note": f"抖音签名接口不可用，将用「{label}」下载后再转写",
+                        "hint": hint, "platform": platform_id, "via": found[0] if found else ""}
             return {"ok": False, "error": str(exc), "hint": hint, "platform": platform_id,
                     "action": fetch_mod.error_action(str(exc))}
         meta = fetch_mod._clean_meta(info)
@@ -918,7 +975,7 @@ class Handler(BaseHTTPRequestHandler):
         return {"job_id": job_id, "status": "queued"}
 
     def _start(self, body: dict, retry: bool = False) -> dict:
-        url = str(body.get("url") or "").strip()
+        url = extract_url(str(body.get("url") or ""))
         if not url and not retry:
             return {"error": "请填视频链接"}
         return self._new_job(body, "url", url=url)
@@ -1177,6 +1234,7 @@ class Handler(BaseHTTPRequestHandler):
             "cookies_from_browser": (query.get("cookies_from_browser") or [""])[0],
             "proxy": (query.get("proxy") or [""])[0],
             "keep_video": (query.get("keep_video") or ["0"])[0] in ("1", "true", "yes"),
+            "douyin_downloader": (query.get("douyin_downloader") or [""])[0],
         }
         result = self._new_job(body, "local", file_path=target, file_name=name)
         result["file"] = name

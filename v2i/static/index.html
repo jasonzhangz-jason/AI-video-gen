@@ -65,8 +65,9 @@
 
         <div class="url-row" id="urlRow">
           <input id="url" type="text" autocomplete="off" spellcheck="false"
-                 placeholder="粘贴公开视频链接：B 站 / YouTube / 播客页…" />
+                 placeholder="粘贴视频链接，或整段分享文案（抖音 / 快手「复制链接」那段直接贴）" />
         </div>
+        <p class="hint url-hint" id="urlHint" hidden></p>
 
         <div class="file-row" id="fileRow" hidden>
           <label class="file-pick" id="filePick">
@@ -129,53 +130,19 @@
                 <option value="firefox">Firefox</option>
               </select>
             </label>
+            <label>抖音下载器
+              <select id="douyinDownloader">
+                <option value="">自动（谁可用用谁）</option>
+              </select>
+            </label>
+            <p class="hint adv-hint">登录态 cookies 已移到 <a href="#" id="gotoCookieSettings">系统配置</a> 统一管理。</p>
             <label>代理（可选）
               <input id="proxy" type="text" placeholder="http://127.0.0.1:7890" />
             </label>
             <label>LLM 模型（可选）
               <input id="model" type="text" placeholder="留空用 .env 里的配置" />
             </label>
-<div class="cookie-field">
-          <span>登录态 cookies</span>
-          <div class="cookie-box">
-            <span class="cookie-status" id="cookieStatus">读取中…</span>
-            <span class="cookie-acts">
-              <button class="link-btn" id="cookieGrab" type="button">一键获取</button>
-              <button class="link-btn" id="cookiePick" type="button">上传</button>
-              <button class="link-btn" id="cookieClear" type="button">清除</button>
-            </span>
-          </div>
-          <input type="file" id="cookieFile" accept=".txt" hidden />
-        </div>
-        <div class="cookie-grab" id="cookieGrabPanel" hidden>
-          <div class="grab-head">从哪个浏览器读取登录态？<span class="hint">读到的 cookies 先给你确认，不会直接覆盖</span></div>
-          <div class="grab-browsers">
-            <button class="ghost grab-b" data-browser="chrome" type="button">Chrome</button>
-            <button class="ghost grab-b" data-browser="edge" type="button">Edge</button>
-            <button class="ghost grab-b" data-browser="firefox" type="button">Firefox</button>
-            <button class="ghost" id="cookieGrabClose" type="button">收起</button>
-          </div>
-          <div class="grab-msg" id="cookieGrabMsg"></div>
-          <div class="grab-list" id="cookieGrabList" hidden>
-            <div class="grab-list-head">
-              <label class="check"><input type="checkbox" id="cookieAll" checked /><span>全选</span></label>
-              <span class="grab-count" id="cookieCount"></span>
-              <input id="cookieFilter" type="search" placeholder="按域名 / 名称过滤…" autocomplete="off" />
-            </div>
-            <div class="grab-cols" id="cookieCols">
-              <span></span>
-              <button class="ck-col" data-sort="domain" type="button">域名<span class="ck-caret"></span></button>
-              <button class="ck-col" data-sort="name" type="button">名称<span class="ck-caret"></span></button>
-              <button class="ck-col" data-sort="value" type="button">值<span class="ck-caret"></span></button>
-              <button class="ck-col" data-sort="expires" type="button">过期<span class="ck-caret"></span></button>
-            </div>
-            <div class="grab-list-body" id="cookieRows"></div>
-          </div>
-          <div class="grab-actions" id="cookieGrabActions" hidden>
-            <button class="primary" id="cookieGrabUse" type="button">确认使用</button>
-            <button class="ghost" id="cookieGrabDrop" type="button">不用了</button>
-          </div>
-        </div>
+
           </div>
         </details>
       </form>
@@ -400,10 +367,72 @@
         </label>
       </div>
 
+      <h3 class="set-group">登录态 cookies</h3>
+      <div class="adv-grid set-grid">
+        <div class="cookie-field">
+        <span>已保存的 cookies（所有任务共用这一份）</span>
+        <div class="cookie-box">
+          <span class="cookie-status" id="cookieStatus">读取中…</span>
+          <span class="cookie-acts">
+            <button class="link-btn" id="cookieView" type="button">查看</button>
+            <button class="link-btn" id="cookieGrab" type="button">一键获取</button>
+            <button class="link-btn" id="cookiePick" type="button">上传</button>
+            <button class="link-btn" id="cookieClear" type="button">清除</button>
+          </span>
+        </div>
+        <input type="file" id="cookieFile" accept=".txt" hidden />
+        <div class="grab-list" id="cookieViewPanel" hidden>
+          <div class="grab-list-head">
+            <span class="grab-count" id="cookieViewCount"></span>
+            <input id="cookieViewFilter" type="search" placeholder="按域名 / 名称过滤…" autocomplete="off" />
+            <button class="link-btn" id="cookieViewClose" type="button">关闭</button>
+          </div>
+          <div class="grab-cols" id="cookieViewCols">
+            <span></span>
+            <button class="ck-col" data-sort="domain" type="button">域名<span class="ck-caret"></span></button>
+            <button class="ck-col" data-sort="name" type="button">名称<span class="ck-caret"></span></button>
+            <button class="ck-col" data-sort="value" type="button">值<span class="ck-caret"></span></button>
+            <button class="ck-col" data-sort="expires" type="button">过期<span class="ck-caret"></span></button>
+          </div>
+          <div class="grab-list-body" id="cookieViewRows"></div>
+        </div>
+        <p class="hint">cookies 改动立即生效（不用点下面的保存），所有任务共用这一份。</p>
+      </div>
+      <div class="cookie-grab" id="cookieGrabPanel" hidden>
+        <div class="grab-head">从哪个浏览器读取登录态？<span class="hint">读到的 cookies 先给你确认，不会直接覆盖</span></div>
+        <div class="grab-browsers">
+          <button class="ghost grab-b" data-browser="chrome" type="button">Chrome</button>
+          <button class="ghost grab-b" data-browser="edge" type="button">Edge</button>
+          <button class="ghost grab-b" data-browser="firefox" type="button">Firefox</button>
+          <button class="ghost" id="cookieGrabClose" type="button">收起</button>
+        </div>
+        <div class="grab-msg" id="cookieGrabMsg"></div>
+        <div class="grab-list" id="cookieGrabList" hidden>
+          <div class="grab-list-head">
+            <label class="check"><input type="checkbox" id="cookieAll" checked /><span>全选</span></label>
+            <span class="grab-count" id="cookieCount"></span>
+            <input id="cookieFilter" type="search" placeholder="按域名 / 名称过滤…" autocomplete="off" />
+          </div>
+          <div class="grab-cols" id="cookieCols">
+            <span></span>
+            <button class="ck-col" data-sort="domain" type="button">域名<span class="ck-caret"></span></button>
+            <button class="ck-col" data-sort="name" type="button">名称<span class="ck-caret"></span></button>
+            <button class="ck-col" data-sort="value" type="button">值<span class="ck-caret"></span></button>
+            <button class="ck-col" data-sort="expires" type="button">过期<span class="ck-caret"></span></button>
+          </div>
+          <div class="grab-list-body" id="cookieRows"></div>
+        </div>
+        <div class="grab-actions" id="cookieGrabActions" hidden>
+          <button class="primary" id="cookieGrabUse" type="button">确认使用</button>
+          <button class="ghost" id="cookieGrabDrop" type="button">不用了</button>
+        </div>
+      </div>
+      </div>
+
       <div class="rw-actions">
         <button class="primary" id="setSave" type="button">保存并生效</button>
-        <button class="ghost" id="setTest" type="button">测试大模型连接</button>
-        <button class="ghost" id="setClear" type="button">清除 API Key</button>
+        <button class="primary" id="setTest" type="button">测试大模型连接</button>
+        <button class="primary" id="setClear" type="button">清除 API Key</button>
         <span class="hint" id="setHint"></span>
       </div>
     </section>

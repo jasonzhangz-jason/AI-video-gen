@@ -661,3 +661,122 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 - 处理：`do_POST` 一进来就 `self.close_connection = True`，POST 响应后关闭连接、不复用；简单粗暴但彻底消除这类"body 没读完导致流错位"的问题（本地工具，多开一条 TCP 无感）。
 - 实测：点清除 → 状态栏正常变「未上传 —— …」，控制台零异常；随后 `/api/cookies` 正常返回。
 
+### 10.46 抖音链接自动归一（2026-08-14 追加）
+
+- 报错「这个链接形式不被支持」来自 yt-dlp 的 `Unsupported URL`，不是本地校验；抖音 `/shipin/` 合集页、部分分享页 yt-dlp 不认。
+- 新增 `resolve_douyin()`：在 `probe()` 与 `fetch()` 入口先跑一次——
+  - `?modal_id=<id>` 直接改写成 `/video/<id>`（最常见的分享链接形态）；
+  - 其它抖音链接 GET 一次页面（带 cookies 里的 douyin cookie + 桌面 UA），从跳转后的 URL、`/video/<id>`、`"aweme_id":"<id>"`、`aweme_id=<id>` 里找视频 id；
+  - 找不到就原样返回，不阻断主流程。
+- 报错文案改成"可用形态清单"（/video/<id>、v.douyin.com 短链、带 modal_id 的分享链接），不再只提 /shipin/。
+- 实测：`/video/` 原样通过；`?modal_id=` 正确改写；假 id 的 `/shipin/` 与假短链不崩、原样返回。
+
+### 10.47 抖音 /user/...?modal_id= 链接支持 + cookie 现实（2026-08-14 追加）
+
+- 用户给的 `https://www.douyin.com/user/<sec_uid>?from_tab_name=main&modal_id=<id>&vid=<id>` 现在能识别：`resolve_douyin()` 取 `modal_id` 拼成 `/video/<id>`，探针日志能看到「链接已转换（modal_id）」。
+- 转换后 yt-dlp 的 Douyin 提取器能走到视频，但报 `Fresh cookies (not necessarily logged in) are needed`。
+- 试过用 `POST https://ttwid.bytedance.com/ttwid/union/register/` 伪造 `ttwid` 注入 cookie 文件：**不够**，yt-dlp 仍判定不新鲜（它还要 msToken / odin_tt / csrf 之类真实访问种下的值）。结论：抖音只能靠"真实浏览器访问过 douyin.com"的 cookies。
+- 报错文案据此改写：说明先在浏览器打开一次站点、再一键获取；Chrome/Edge 读不出来就走扩展导出或 Firefox。
+
+### 10.48 抖音：cookies 够也进不去（a_bogus）→ 引导走本地文件（2026-08-14 追加）
+
+- 用户一键导入 cookies 后仍报 fresh cookies。核对 `cookies.txt`：**55 条抖音 cookie 已就位**（sessionid / sid_guard / ttwid / odin_tt / s_v_web_id / UIFID …），不是"没导进来"。
+- 真相：yt-dlp 2026.10.21 的 Douyin 提取器调 `aweme/v1/web/aweme/detail/`，该接口现在强制 `a_bogus` 签名。实测：
+  - 带 cookies 直接请求 → `403 Blocked by ArgusSecurityPlugin Uifid Not Found`；
+  - 伪造 `ttwid`（ttwid.bytedance.com 注册接口）→ 仍然不够；
+  - 页面 HTML 里只有 dns-prefetch 和 CSP，真正的播放地址是运行时 XHR 拿的，抓不到。
+- 结论：这不是 cookies 问题，是签名问题，换 cookie 无解。已在 `friendly_error()` 里对抖音单独给出诚实解释，`error_action()` 返回新增的 `local`，前端据此切到「本地文件」并自动弹文件选择框。
+- 推荐工作流：抖音客户端/网页下载 mp4 → 拖进 v2i → 转写 + 提炼（这两步完全不依赖抖音接口）。
+
+### 10.49 抖音外部下载器兜底（f2 / douyin-downloader）（2026-08-14 追加）
+
+- 新增 `v2i/douyin.py`：探测 `f2` / `douyin-downloader`（PATH → `.tools/`），下载到 `<run>/downloaded/`，返回最新视频文件；支持 `V2I_DOUYIN_CMD` 自定义命令（占位符 `{url}` `{dir}`）。
+- `fetch._douyin_fallback()`：probe 报 a_bogus/fresh-cookies 时自动接管；`probe()`/`_run_one()`/`_cmd_fetch()` 都会在"下载器可用"时绕过探测，用 `douyin-<id>` 作为工作目录名。
+- 识别报错时 keys 兼容中文翻译（`a_bogus` / `签名` / `fresh cookies`），否则翻译后的文案会让判定失效（第一次就踩了）。
+- 坑：Windows 下 `.cmd` 不能被 `subprocess` 直接执行，必须 `cmd /c` 包一层；测试桩最初用 ASCII 写死中文路径导致 copy 失败，改成先复制到 ASCII 路径。
+- 实测（用桩程序模拟 f2）：`v2i run <抖音链接> --mode copy --copy-style raw` → 探测失败 → 外部下载器拿到 14.7MB mp4 → 转写 49s → 产出 copy.md/digest/transcript，全链路通；移除桩后优雅降级为提示安装。
+
+### 10.50 抖音下载器可选（f2 / douyin-downloader / 自定义）（2026-08-14 追加）
+
+- `v2i/douyin.py` 重构：`list_tools()` 报告三种工具的可用性与路径；`find_downloader(prefer)` 支持指定优先；`download(..., prefer=)` 按选择执行对应命令（f2 → `dy -u -p -k`，douyin-downloader → `-u -o`，custom → `V2I_DOUYIN_CMD` 模板）。
+- `Config.douyin_downloader`（`V2I_DOUYIN_DOWNLOADER`）贯通 CLI（`--douyin-downloader auto|f2|douyin-downloader|custom`）、web（start body / upload query）与 fetch 兜底逻辑。
+- 新增 `GET /api/douyin_tools`；高级选项新增「抖音下载器」下拉，选项带 `✓ 已安装 / 未安装` 标注，默认「自动」。
+- 实测：桩 f2 存在时 `auto` 与 `prefer=f2` 都能命中，`prefer=douyin-downloader` 返回 None（不误用）；`/api/douyin_tools` 三种工具状态正确；下拉渲染 4 项、控制台零异常。
+
+### 10.51 cookies 收进系统配置（2026-08-14 追加）
+
+- `#cookieStatus / cookiePick / cookieGrab / cookieClear / cookieGrabPanel` 整块从【新建任务】的高级选项搬到【系统配置】页，独立成「登录态 cookies」分组；提示语改为"所有任务共用这一份、改动立即生效"。
+- 高级选项原位留一条 `adv-hint`：「登录态 cookies 已移到 系统配置 统一管理」，点一下 `switchPage("settings")` 并滚到该字段。
+- 探测失败的 cookies 动作也改成跳【系统配置】再高亮（不再展开高级选项）；`switchPage("settings")` 时顺带 `loadCookies()` 刷新状态。
+- 实测：`details.advanced` 里已无 cookie 字段、系统配置里可见且状态正确（93 条）；跨页跳转后 `#page-settings` 显示、字段可见；控制台零异常。
+
+### 10.52 查看已导入的 cookies 列表（2026-08-14 追加）
+
+- 新增 `GET /api/cookies/list`：`MozillaCookieJar` 解析 `cookies.txt`，返回 `{present,count,items[]}`，字段与"从浏览器读取"的列表一致。
+- cookies 行新增「查看」：展开 `#cookieViewPanel`（复用 `.grab-list` 样式），四列表头可排序（域名/名称/值/过期，会话排最后）、按域名名称过滤、显示「共 N 条 / 命中 M 条」，纯只读。
+- 实测：93 条正确渲染、排序与过滤正常、控制台零异常。
+
+### 10.53 系统配置三个按钮统一为 primary（2026-08-14 追加）
+
+- 「测试大模型连接」「清除 API Key」由 `ghost` 改为 `primary`，与「保存并生效」完全一致：同色 `rgb(59,98,246)`、同高 47px、同字重 600、同圆角 10px、同样的 hover 加深与 disabled 半透明。
+- 清除仍保留二次确认弹窗（破坏性操作不变）。
+- 实测：三个按钮 computed style 逐项一致（高度/圆角/字重/前景色），控制台零异常。
+
+### 10.55 在 Python 3.14 上把 f2 装起来（绕开编译）（2026-08-14 追加）
+
+- 用户 `pip install f2` 失败：f2 锁死 `pydantic==2.9.*` / `pyyaml==6.0.2`，这两个版本没有 cp314 wheel，本机还没有 MSVC/能用的 link.exe（日志里 `link: extra operand` 说明命中的是 GNU link）。
+- 可行装法（已实测）：`pip install --target .tools/f2 --no-deps f2`，再装放宽版本的依赖
+  （`pydantic>=2.12`、`pyyaml>=6.0.3` 都有 cp314 wheel，其余 aiofiles/httpx/rich/websockets… 也都有）。f2 0.0.1.7 在新版 pydantic 下能正常启动。
+- `_run()` 会为 `.tools/` 下的 `--target` 安装自动注入 `PYTHONPATH`（f2.exe 的包在上两级目录），所以不必改系统环境变量。
+- f2 的真实命令对齐：`f2 dy -u URL -p DIR -M one -k <cookie 字符串> [-P 代理]`（`-k` 要字符串不是文件路径，新增 `_cookie_string()` 从 cookies.txt 过滤 douyin 域拼接；支持传代理）。
+- 实测到 403：f2 能算出 a_bogus 并发出请求，但抖音返回 403（风控/IP/登录态问题），不是命令拼装问题；后续需要新鲜登录 cookies 或代理再试。
+
+### 10.56 复现 403 的结论（2026-08-14 追加）
+
+- 用当前 93 条 cookies（含 `sessionid` / `ttwid` / `msToken`）跑 f2，两个视频 id（modal_id 与 vid）都稳定 `403 Forbidden`，不是命令拼装或 cookie 传递问题。
+- f2 已是最新版 `0.0.1.7`（PyPI 无更新），发布于 2024-11；抖音的 a_bogus 与 App 参数迭代快，旧版签名被风控识别。
+- `--auto-cookie firefox` 也会失败（需要交互确认 + browser_cookie3 读不到）。
+- 结论：抖音这条路当前无解，除非换更新更频繁的下载器（douyin-downloader 一类）或使用官方客户端下载后走「本地文件」。
+- 代码侧保持"装了就能用"：`/api/douyin_tools` 检测到 f2 显示已安装，命令模板与代理透传都已就绪，等下载器本身能过风控即可自动接管。
+
+### 10.57 再试 douyin-downloader v2（仍被风控）（2026-08-14 追加）
+
+- 拉取 `jiji262/douyin-downloader` v2.0.0（较新的 a_bogus 实现）到 `.tools/douyin-downloader/`，依赖装进 `deps/`（aiohttp 3.14.5 等全部有 cp314 轮子）。
+- 用它跑同一个视频（配置里带 ttwid/odin_tt/sessionid）：`Success 0 / Failed 1`，原因「抖音未返回作品详情（可能触发了风控验证）」。
+- f2 403、douyin-downloader 风控 → 两个独立实现同时失败，指向 **IP/风控层**，不是签名或 cookie 传递问题。
+- 顺手把 run.py 版接进 `douyin.py`：自动识别 `.tools/douyin-downloader/douyin-downloader-main/run.py`，按 cookies 生成 `downloader.config.yml`（含 proxy），`PYTHONPATH` 指向 `deps/`；`/api/douyin_tools` 现在两种工具都显示已安装。
+- 结论：代码路径已就绪，缺的是能过风控的出口 IP（代理）或换网络环境。
+
+### 10.58 浏览器自动化打通抖音（2026-08-14 追加）
+
+- 新增 `tools/douyin_browser.mjs`：启动本机 Chrome（`--headless=new` + 临时 profile + 随机调试端口），连接到 **page target** 的 WS（browser 级 target 收不到 Network 事件，第一次就栽在这），`Network.enable` 后导航到视频页。
+- 关键点：**让页面自己算 a_bogus**。页面加载时会主动请求 `/aweme/v1/web/aweme/detail/`，我们只监听 `Network.responseReceived` 再 `Network.getResponseBody` 读 JSON，从 `aweme_detail.video.play_addr / download_addr / bit_rate[].play_addr` 取真实 mp4 地址。
+- 下载：带 `Referer: https://www.douyin.com/` + 桌面 UA 拉取，实测 `200 video/mp4`、7.97MB、magic `ftypisom`；把 `desc` 写进 `downloaded/douyin-meta.json`，`fetch` 用它当标题（不再是 douyin-video）。
+- 集成：`douyin.py` 新增 `browser` 工具（`browser_ready()` 检查 node + Chrome），auto 顺序改为 浏览器 → f2 → douyin-downloader → 自定义，且**逐个尝试直到成功**（之前只挑第一个）；GUI 下拉显示「浏览器自动化（本机 Chrome + CDP）✓ 已安装」。
+- 实测整链路：`v2i run <抖音链接> --mode copy --copy-style raw` → 浏览器下载 8.0MB → 转写 2.8×（65s 视频）→ 产出 copy.md/digest/transcript，用时 39s。
+- 收尾：脚本结束删临时 profile（验证跑完 `%TEMP%` 无 `v2i-cdp-*` 残留）。
+- 代价：每次多 15–25s 启动 Chrome + 载页面；headless 可能被站点识别（这里未触发），失败时自动回退到 f2。
+
+### 10.59 分享文案直接可用 + 探针不再误报（2026-08-14 追加）
+
+- 用户贴的是整段抖音分享（`Fhb:/ O@X.Zz #话题 https://v.douyin.com/xxx/ 复制此链接…`）。新增 `util.extract_url()`，CLI（run/fetch/probe）与 web（`/api/start`、`/api/probe`）入口统一先抽链接。
+- 短链解析：`resolve_douyin` 跟跳转拿到 `/video/7700226586464777209`；工作目录名与 `meta.id` 改用解析后的 id（之前短链没有数字，目录叫 `douyin-video`）。
+- 实跑整链路（39.5MB、4 分 21 秒）：抽出短链 → 解析 → 浏览器自动化下载 → 转写 → 提炼，95 秒完成，产出 copy.md/digest/transcript。
+- `/api/probe` 不再对抖音报"失败"：命中"签名不可用但下载器可用"时返回 `{ok:true, note:"抖音签名接口不可用，将用「浏览器自动化…」下载后再转写", via:"browser"}`，避免用户以为链接不支持。
+- 抖音报错文案同步改为"会用浏览器自动化下载，无需处理"，不再让人去装 f2。
+
+### 10.60 前端识别分享文案（2026-08-14 追加）
+
+- URL 输入框改为「粘贴视频链接，或整段分享文案」；`input` 事件里用正则抽链接，命中时在下方显示 `已从分享文案中识别到链接：<code>…</code> · 会用它解析`，纯链接则隐藏该提示。
+- 「先探测」和「开始」都改用抽出来的链接提交（后端也会再抽一次，双保险）。
+- 实测：整段抖音分享（含 `Fhb:/`、话题、`复制此链接…`）贴进去 → 提示出现；走 GUI 任务（`POST /api/start`）跑完 98.7s，产出 copy.md/digest/transcript，目录 `douyin-7700226586464777209`。
+
+### 10.61 探针针对抖音/cookie 平台优化（2026-08-14 追加）
+
+- 新增 `fetch.cookie_domains()` / `fetch.missing_cookie_domain()`：读 `cookies.txt` 域名，和 `platforms` 的 hosts 比对，判断该平台有没有登录态。
+- `/api/probe` 两条快捷路径：
+  1. **抖音 + 有下载器**：不再调 yt-dlp（原来要等 5–10 秒才失败），直接 `resolve_douyin` 拿视频 id，返回 `{ok:true, note:"…将用「浏览器自动化…」下载后再转写", resolved}`；实测 **0.6s**。
+  2. **需要 cookies 但缺失**：直接返回 `{ok:false, error:"快手 需要登录态 cookies，但当前 cookies.txt 里没有 kuaishou.com 的条目——到「系统配置 → 登录态 cookies」…", action:"cookies_file"}`，前端渲染成红字 + 「上传 cookies」按钮。
+- 前端 `probeUrl()` 支持 `note` 字段（不再拼 `undefined · undefined`）。
+- 实测：抖音分享文案 → 0.6s 绿字 + 解析链接；快手链接 → 0.0s 红字 + 精确缺失域名 + 按钮；控制台零异常。
+

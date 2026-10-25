@@ -1114,3 +1114,10 @@ button.mini:hover { background: #ffedd5; }
   white-space: nowrap;
 }
 .grab-list-body .ck-row:hover .ck-value { color: var(--ink); }
+
+.adv-hint { grid-column: 1 / -1; font-size: 11.5px; color: var(--muted); }
+.adv-hint a { color: var(--brand); }
+
+
+.url-hint { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+.url-hint code { padding: 1px 6px; border-radius: 5px; background: #eef1f6; font: 11.5px "Cascadia Mono", Consolas, monospace; color: var(--ink); }

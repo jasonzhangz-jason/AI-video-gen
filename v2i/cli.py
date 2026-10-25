@@ -12,7 +12,7 @@ from . import distill as distill_mod
 from . import normalize as norm
 from . import fetch as fetch_mod
 from .config import PROJECT_ROOT, Config, ConfigError
-from .util import now_iso, read_json, slugify, write_json
+from .util import extract_url, now_iso, read_json, slugify, write_json
 
 
 def _out(msg: str = "") -> None:
@@ -49,6 +49,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--copy-style", choices=["raw", "light", "script"], help="文案风格：raw 原样 / light 轻度整理 / script 口播稿")
     run.add_argument("--cookies-from-browser", help="复用浏览器 cookies：chrome / edge / firefox")
     run.add_argument("--keep-video", action="store_true", help="下载原视频（界面里可播放），否则只下音频")
+    run.add_argument("--douyin-downloader", choices=["auto", "f2", "douyin-downloader", "custom"],
+                     help="抖音兜底下载器（默认 auto）")
     run.add_argument("--platform", help="指定平台 id（如 douyin / youtube / x）")
     common(run)
 
@@ -109,6 +111,8 @@ def _config(args) -> Config:
         overrides["prefer_subs"] = False
     if getattr(args, "keep_video", False):
         overrides["keep_video"] = True
+    if getattr(args, "douyin_downloader", None):
+        overrides["douyin_downloader"] = args.douyin_downloader
     return Config.from_env(**overrides)
 
 
@@ -133,10 +137,23 @@ def _modes(value: str) -> tuple[str, ...]:
 
 def _run_one(url: str, cfg: Config, runs: Path, modes: tuple[str, ...], force: bool) -> Path:
     started = time.time()
+    url = extract_url(url)
 
-    info = fetch_mod.probe(url, cfg)
-    vid = str(info.get("id") or "video")
-    workdir = runs / f"{slugify(info.get('title') or vid)}-{vid}"
+    try:
+        info = fetch_mod.probe(url, cfg)
+        vid = str(info.get("id") or "video")
+        workdir = runs / f"{slugify(info.get('title') or vid)}-{vid}"
+    except fetch_mod.FetchError:
+        if not fetch_mod.douyin_fallback_ready(url, cfg):
+            raise
+        import re as _re
+
+        resolved = fetch_mod.resolve_douyin(url, cfg)
+        match = _re.search(r"(\d{10,})", resolved) or _re.search(r"(\d{6,})", url)
+        vid = match.group(1) if match else "video"
+        workdir = runs / f"douyin-{vid}"
+        info = None
+        _out("  抖音接口需要签名，改用外部下载器下载后再转写")
     workdir.mkdir(parents=True, exist_ok=True)
     _out(f"  工作目录：{workdir}")
 
@@ -203,9 +220,22 @@ def _cmd_run(args) -> int:
 def _cmd_fetch(args) -> int:
     cfg = _config(args)
     runs = _runs(cfg, args)
-    info = fetch_mod.probe(args.url, cfg)
-    vid = str(info.get("id") or "video")
-    workdir = runs / f"{slugify(info.get('title') or vid)}-{vid}"
+    args.url = extract_url(args.url)
+    try:
+        info = fetch_mod.probe(args.url, cfg)
+        vid = str(info.get("id") or "video")
+        workdir = runs / f"{slugify(info.get('title') or vid)}-{vid}"
+    except fetch_mod.FetchError:
+        if not fetch_mod.douyin_fallback_ready(args.url, cfg):
+            raise
+        import re as _re
+
+        resolved = fetch_mod.resolve_douyin(args.url, cfg)
+        match = _re.search(r"(\d{10,})", resolved) or _re.search(r"(\d{6,})", args.url)
+        vid = match.group(1) if match else "video"
+        workdir = runs / f"douyin-{vid}"
+        info = None
+        _out("  抖音接口需要签名，改用外部下载器")
     workdir.mkdir(parents=True, exist_ok=True)
     result = fetch_mod.fetch(args.url, cfg, workdir, force=args.force, info=info)
     _out(f"\n  产出：{workdir}")
@@ -331,6 +361,7 @@ def _cmd_probe(args) -> int:
     from . import platforms as platforms_mod
 
     cfg = _config(args)
+    args.url = extract_url(args.url)
     ok, hint = platforms_mod.check(getattr(args, "platform", None), args.url)
     _out(f"  平台：{hint}")
     try:

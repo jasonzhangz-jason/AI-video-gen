@@ -617,7 +617,7 @@
       return;
     }
     const isFile = state.src === "file";
-    const url = $("#url").value.trim();
+    const url = extractUrlFromText($("#url").value) || $("#url").value.trim();
     if (!isFile && !url) { $("#url").focus(); return; }
     if (isFile && !state.file) { alert("先选一个音频或视频文件"); return; }
 
@@ -632,6 +632,7 @@
       proxy: $("#proxy") && $("#proxy").value.trim() ? $("#proxy").value.trim() : undefined,
       prefer_subs: $("#preferSubs").checked,
       keep_video: $("#keepVideo") ? $("#keepVideo").checked : false,
+      douyin_downloader: $("#douyinDownloader") ? $("#douyinDownloader").value : "",
       force: $("#force").checked,
     };
 
@@ -656,6 +657,7 @@
         if (options.proxy) params.set("proxy", options.proxy);
         params.set("prefer_subs", options.prefer_subs ? "1" : "0");
         params.set("keep_video", options.keep_video ? "1" : "0");
+        if (options.douyin_downloader) params.set("douyin_downloader", options.douyin_downloader);
         params.set("force", options.force ? "1" : "0");
 
         const bar = $("#bar");
@@ -754,6 +756,75 @@
       grabMsg(err.message, "err", "读不到就换一个浏览器，或用「上传 cookies.txt」从扩展导出。");
     } finally {
       buttons.forEach((b) => { b.disabled = false; });
+    }
+  }
+
+  function paintSavedRows() {
+    const box = $("#cookieViewRows");
+    if (!box) return;
+    const items = (state.savedItems || []).slice();
+    const sort = state.savedSort || { key: "", dir: 1 };
+    if (sort.key) {
+      items.sort((a, b) => {
+        const av = String(a[sort.key] || "");
+        const bv = String(b[sort.key] || "");
+        if (sort.key === "expires") {
+          const as = av === "会话" ? "99999999" : av;
+          const bs = bv === "会话" ? "99999999" : bv;
+          return as.localeCompare(bs) * sort.dir;
+        }
+        const cmp = av.localeCompare(bv, "zh-CN");
+        return (cmp === 0 ? a.i - b.i : cmp) * sort.dir;
+      });
+    }
+    box.innerHTML = items.map((c) => `
+      <label class="ck-row" data-search="${escapeHtml((c.domain + " " + c.name).toLowerCase())}">
+        <span></span>
+        <span class="ck-domain" title="${escapeHtml(c.domain + (c.path && c.path !== "/" ? c.path : ""))}">${escapeHtml(c.domain)}</span>
+        <span class="ck-name" title="${escapeHtml(c.name + (c.http_only ? "（HttpOnly）" : "") + (c.secure ? "（Secure）" : ""))}">${escapeHtml(c.name)}${c.http_only ? " 🔒" : ""}</span>
+        <span class="ck-value" title="${escapeHtml(c.value || "")}">${escapeHtml(c.value || "")}</span>
+        <span class="ck-exp" title="${escapeHtml(c.expires || "")}">${escapeHtml(c.expires || "")}</span>
+      </label>`).join("");
+    document.querySelectorAll("#cookieViewCols .ck-col").forEach((btn) => {
+      const on = btn.dataset.sort === sort.key;
+      btn.classList.toggle("on", on);
+      const caret = btn.querySelector(".ck-caret");
+      if (caret) caret.textContent = on ? (sort.dir > 0 ? "▲" : "▼") : "";
+    });
+    filterSavedRows($("#cookieViewFilter").value);
+  }
+
+  function filterSavedRows(query) {
+    const q = (query || "").trim().toLowerCase();
+    let visible = 0;
+    document.querySelectorAll("#cookieViewRows .ck-row").forEach((row) => {
+      const hit = !q || (row.dataset.search || "").includes(q);
+      row.hidden = !hit;
+      if (hit) visible += 1;
+    });
+    const total = (state.savedItems || []).length;
+    const count = $("#cookieViewCount");
+    if (count) count.textContent = `共 ${total} 条` + (visible !== total ? `，命中 ${visible} 条` : "");
+  }
+
+  async function showSavedCookies() {
+    const panel = $("#cookieViewPanel");
+    if (!panel) return;
+    panel.hidden = false;
+    $("#cookieViewRows").innerHTML = '<p class="usage-empty">读取中…</p>';
+    try {
+      const data = await api("/api/cookies/list");
+      if (data.error) throw new Error(data.error);
+      state.savedItems = data.items || [];
+      state.savedSort = { key: "", dir: 1 };
+      if (!state.savedItems.length) {
+        $("#cookieViewRows").innerHTML = '<p class="usage-empty">还没有导入 cookies。</p>';
+        $("#cookieViewCount").textContent = "共 0 条";
+        return;
+      }
+      paintSavedRows();
+    } catch (err) {
+      $("#cookieViewRows").innerHTML = `<p class="usage-empty">读取失败：${escapeHtml(err.message)}</p>`;
     }
   }
 
@@ -922,6 +993,27 @@
     }
   }
 
+  async function loadDouyinTools() {
+    const sel = $("#douyinDownloader");
+    if (!sel) return;
+    try {
+      const data = await api("/api/douyin_tools");
+      const current = sel.value;
+      const opts = (data.tools || []).map((t) => {
+        const mark = t.available ? "✓ 已安装" : "未安装";
+        return `<option value="${escapeHtml(t.id)}">${escapeHtml(t.label)} · ${mark}</option>`;
+      }).join("");
+      sel.innerHTML = '<option value="">自动（谁可用用谁）</option>' + opts;
+      sel.value = current || "";
+      const ready = (data.tools || []).filter((t) => t.available).length;
+      if (!ready) {
+        sel.title = "都没装：贴抖音链接会提示安装；也可以先本地下载再拖进来";
+      }
+    } catch (err) {
+      sel.title = "读取下载器状态失败：" + err.message;
+    }
+  }
+
   async function loadPlatforms() {
     try {
       const data = await api("/api/platforms");
@@ -938,7 +1030,7 @@
   }
 
   async function probeUrl() {
-    const url = $("#url").value.trim();
+    const url = extractUrlFromText($("#url").value) || $("#url").value.trim();
     const out = $("#probeOut");
     if (!url) { out.className = "probe-out err"; out.textContent = "先贴一个链接"; return; }
     out.className = "probe-out";
@@ -949,7 +1041,12 @@
     if ($("#proxy") && $("#proxy").value.trim()) params.set("proxy", $("#proxy").value.trim());
     try {
       const r = await api(`/api/probe?${params.toString()}`);
-      if (r.ok) {
+      if (r.ok && r.note) {
+        // 抖音这类走外部下载器的：没有 yt-dlp 元数据，但可以下
+        out.className = "probe-out ok";
+        const resolved = r.resolved ? ` · ${r.resolved}` : "";
+        out.textContent = `✓ ${r.note}${resolved}`;
+      } else if (r.ok) {
         const subs = (r.subtitles || []).length ? `字幕 ${r.subtitles.slice(0, 3).join(" / ")}` : "无字幕 → 走转写";
         out.className = "probe-out ok";
         out.textContent = `✓ ${r.title} · ${r.duration} · ${subs} · ${r.formats} 个格式`;
@@ -988,20 +1085,29 @@
       }
       return;
     }
+    if (action === "local") {
+      out.className = "probe-out";
+      out.innerHTML = "抖音这条链接 yt-dlp 拿不到（需要 a_bogus 签名）。<b>最稳的路：先把视频下载到本地，再切「本地文件」拖进来。</b>";
+      setSource("file");
+      const pick = document.getElementById("fileInput");
+      if (pick) setTimeout(() => pick.click(), 300);
+      return;
+    }
     if (action === "url") {
       out.className = "probe-out";
       out.innerHTML = "抖音：<code>https://www.douyin.com/video/&lt;id&gt;</code> 或 <code>v.douyin.com</code> 短链（<b>/shipin/ 不支持</b>）；小红书：<code>xhslink.com</code> 短链或笔记页。";
       return;
     }
-    // cookies 类：字段在高级选项里，先展开再定位
-    const adv = document.querySelector("details.advanced");
-    if (adv) adv.open = true;
-    const field = document.querySelector(".cookie-field");
-    if (field) {
-      field.scrollIntoView({ block: "center", behavior: "smooth" });
-      field.classList.add("flash");
-      setTimeout(() => field.classList.remove("flash"), 1600);
-    }
+    // cookies 类：统一在【系统配置】页管理，跳过去并高亮
+    switchPage("settings");
+    setTimeout(() => {
+      const field = document.querySelector(".cookie-field");
+      if (field) {
+        field.scrollIntoView({ block: "center", behavior: "smooth" });
+        field.classList.add("flash");
+        setTimeout(() => field.classList.remove("flash"), 1600);
+      }
+    }, 120);
     const input = $("#cookieFile");
     if (input) input.click();
   }
@@ -1039,7 +1145,10 @@
       fillImportOptions();
       loadRewriteHistory();
     }
-    if (page === "settings") loadSettings();
+    if (page === "settings") {
+      loadSettings();
+      loadCookies();
+    }
   }
 
   function fmtNum(n) {
@@ -1730,6 +1839,28 @@
   document.querySelectorAll("#srcSwitch .seg").forEach((el) => {
     el.addEventListener("click", () => setSource(el.dataset.src));
   });
+  const URL_IN_TEXT = /https?:\/\/[^\s<>'"()（）【】]+/;
+
+  function extractUrlFromText(text) {
+    const m = String(text || "").match(URL_IN_TEXT);
+    return m ? m[0].replace(/[，。！？、；：,.!?;:]+$/, "") : "";
+  }
+
+  function updateUrlHint() {
+    const hint = $("#urlHint");
+    const input = $("#url");
+    if (!hint || !input) return;
+    const raw = input.value.trim();
+    const found = extractUrlFromText(raw);
+    if (found && found !== raw) {
+      hint.hidden = false;
+      hint.innerHTML = `已从分享文案中识别到链接：<code>${escapeHtml(found)}</code> · 会用它解析`;
+    } else {
+      hint.hidden = true;
+      hint.textContent = "";
+    }
+  }
+
   $("#filePick").addEventListener("click", (e) => {
     if (e.target.id !== "fileInput") $("#fileInput").click();
   });
@@ -1760,6 +1891,18 @@
   $("#histRefresh").addEventListener("click", async () => { await loadRuns(); renderHistoryPage(); });
   $("#howtoBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleHowto(); });
   $("#usageRefresh").addEventListener("click", loadUsage);
+  loadDouyinTools();
+  const goCookie = $("#gotoCookieSettings");
+  if (goCookie) {
+    goCookie.addEventListener("click", (e) => {
+      e.preventDefault();
+      switchPage("settings");
+      setTimeout(() => {
+        const field = document.querySelector(".cookie-field");
+        if (field) field.scrollIntoView({ block: "center", behavior: "smooth" });
+      }, 120);
+    });
+  }
   document.addEventListener("click", (e) => {
     const pop = $("#howtoPop");
     if (!pop || pop.hidden) return;
@@ -1787,6 +1930,22 @@
     if (!panel.hidden) grabMsg("选一个浏览器开始读取。", "");
   });
   $("#cookieGrabClose").addEventListener("click", () => { $("#cookieGrabPanel").hidden = true; });
+  $("#cookieView").addEventListener("click", () => {
+    const panel = $("#cookieViewPanel");
+    if (panel.hidden) showSavedCookies();
+    else panel.hidden = true;
+  });
+  $("#cookieViewClose").addEventListener("click", () => { $("#cookieViewPanel").hidden = true; });
+  $("#cookieViewFilter").addEventListener("input", (e) => filterSavedRows(e.target.value));
+  document.querySelectorAll("#cookieViewCols .ck-col").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const sort = state.savedSort || { key: "", dir: 1 };
+      if (sort.key === btn.dataset.sort) sort.dir = -sort.dir;
+      else { sort.key = btn.dataset.sort; sort.dir = 1; }
+      state.savedSort = sort;
+      paintSavedRows();
+    });
+  });
   document.querySelectorAll(".grab-b").forEach((b) => {
     b.addEventListener("click", () => grabCookies(b.dataset.browser));
   });
@@ -1810,7 +1969,7 @@
   $("#cookieFile").addEventListener("change", (e) => { if (e.target.files[0]) uploadCookies(e.target.files[0]); e.target.value = ""; });
   $("#cookieClear").addEventListener("click", () => { if (confirm("清除已上传的 cookies？")) clearCookies(); });
   $("#platform").addEventListener("change", renderPlatformNote);
-  $("#url").addEventListener("input", () => {
+  $("#url").addEventListener("input", () => { updateUrlHint();
     if ($("#platform").value !== "auto") return;
     const found = detectPlatform($("#url").value.trim());
     if (found) {

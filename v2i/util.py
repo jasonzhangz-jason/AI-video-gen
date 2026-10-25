@@ -138,3 +138,20 @@ def display_url(url: str) -> str:
     except Exception:
         pass
     return url
+
+
+_URL_RE = __import__("re").compile(r"https?://[^\s<>'\"()（）【】]+")
+
+
+def extract_url(text: str) -> str:
+    """从"分享文案 + 链接"里抽出第一个 http(s) 链接。
+
+    抖音/快手的分享都是「文案 + 短链 + 复制提示」，直接把整段贴进来很常见，
+    这里统一兜住；抽不到就返回去掉首尾空白的原文。
+    """
+    raw = (text or "").strip()
+    m = _URL_RE.search(raw)
+    if not m:
+        return raw
+    url = m.group(0).rstrip("，。！？、；：,.!?;:")
+    return url
