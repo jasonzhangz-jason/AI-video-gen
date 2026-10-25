@@ -799,3 +799,66 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 - 实测：抖音任务的「所有文件」首行是 `VIDEO downloaded/douyin-video.mp4`，第二行 `AUDIO audio.m4a`，之后才是 chunks.json / manifest.json 这些文本。
 - 排序在后端做，`/api/files` 和 GUI 一致，不需要前端二次处理。
 
+### 10.65 人声/伴奏分离（audio-separator）（2026-08-14 追加）
+
+- Python 3.14 上**能装**：`audio-separator 0.47.1` + `torch 2.14.1` + `onnxruntime 1.31.0` 都有 cp314 wheel；只有 Windows 专属依赖 `diffq-fixed` 编不出来（缺 pyx/编译链），实测用 `--no-deps` 装主体 + 手动补依赖可绕开（MDX/onnx 路径不需要 diffq）。
+- 新增 `v2i/separate.py`：`available()/command()` 找 `.tools/separator/bin/audio-separator.exe`；`_env()` 注入 `PYTHONPATH`、把 imageio 的静态 ffmpeg 复制成 `.tools/bin/ffmpeg.exe` 并前置到 PATH（否则 audio-separator 调 ffmpeg 报 WinError 2）、`--model_file_dir` 指到可写的 `.tools/separator/models`（默认 `/tmp` 在 Windows 上 PermissionError）、并把 `cfg.proxy` 注入 `HTTP(S)_PROXY`。
+- 集成：`Config.separate`（`V2I_SEPARATE`）、GUI 模式行「分离人声/伴奏」pill（默认关）、`/api/start` 与上传 query 透传、`fetch` 在抽出音频后按开关调用，产出 `vocals.mp3` / `instrumental.mp3` 并写入 `source.json` 的 `stems`；失败只打日志不中断。
+- **当前卡点**：模型下载走 `raw.githubusercontent.com`，本机被重置（`ConnectionResetError 10054`）。命令、ffmpeg、proxy 透传都验证过（用错误代理会明确报 ProxyError），只差一个能出网的代理。
+
+### 10.66 任务平台标签 + 历史页按平台筛选（2026-08-14 追加）
+
+- `_run_summary()` 用 `meta.webpage_url / manifest.url` 跑 `platforms.match()`，返回 `platform`（id）与 `platform_label`（如「抖音」「哔哩哔哩 B站」；无 URL 的本地任务标「本地文件」）。
+- 历史页新增 `.hist-select` 平台下拉（全部平台 + 各平台 + 本地文件），与搜索/只看有视频/分页联动；每行加绿色平台徽标；结果卡头部 meta 也会带上平台名。
+- 实测：5 条任务（4 抖音 + 1 B 站）→ 选「抖音」后 4 条、计数「共 5 条，命中 4 条」，徽标全部为「抖音」，控制台零异常。
+
+### 10.67 文案改写风格扩到 10 种（2026-08-15 追加）
+
+- 新增 8 个 prompt：小红书笔记、公众号长文、知乎回答、新闻通稿、微博短文案、访谈问答、带货口播、故事化叙述；加上原有轻度整理/口播稿共 10 种，统一带「事实不许改 / 只输出正文 / 不静默删广告」硬约束，仅微博允许大幅压缩。
+- 新增 `v2i/rewrite_styles.py` 登记表（id → 中文名 + prompt 名），`/api/rewrite/styles` 返回列表，前端下拉改为接口驱动（新增风格只改一个文件 + 一行登记）。
+- `_rewrite` 用登记表校验与选 prompt（未知 style 回退 light）；改写历史的风格名也走登记表（`style_label`）。
+- 实测四种：小红书 219 字（emoji+话题标签+互动提问）、微博 97 字（<180 字含标签）、新闻通稿 150 字（第三人称"有观点认为"）、访谈问答 166 字（Q1/Q2 格式）；历史列表正确显示「访谈问答 / 新闻通稿 / 微博短文案」。
+
+### 10.68 失败/中断任务重试（2026-08-15 追加）
+
+- `_run_job` 失败时写 `manifest.status="failed"` + `error`，成功时写 `"done"`；`_run_summary` 暴露 `status / error / can_retry`。
+- `/api/retry` 现在支持两种入参：`{dir}`（历史任务按目录重跑：读 meta 的 `webpage_url`、manifest 的 `modes`，`force=true`；本地任务若源文件还在也能重跑）和原来的 `{url,...}`（同参数再跑一次）。
+- 前端：任务卡片失败时显示「重试这次任务」+ 提示；历史任务行显示「失败 / 中断」徽标 + 「重试」按钮（`status != done` 且 `can_retry`），点完切回新建任务页并接管进度。
+- 顺带修两个真 bug：
+  1. `_retry` 用了不存在的 `self._cfg` → 500（改成 `self._cfg_from(body)`）；
+  2. `pollJob` 里 `if (job.error) throw` 把"任务失败"误判成"请求失败"，界面显示「连接中断」而不是「失败」——改成只有拿不到 `status` 时才当请求错误。
+- 另外 `read_json` 改用 `utf-8-sig`，带 BOM 的 json 不再炸整个 `/api/runs`。
+- 实测：坏链接 → 卡片显示「失败」+ 重试按钮；点重试新 job 正常入队；`{dir}` 重试真实任务 76 秒跑完、产出齐全；中断任务行显示「中断」+「重试」。
+
+### 10.69 代理测延迟（2026-08-15 追加）
+
+- 新增 `v2i/net.py`：对 4 个目标各打一次请求（gstatic 204 / DeepSeek API / raw.githubusercontent / douyin），返回 `{label, ok, ms, detail}`，`summary` 形如「2/4 通 · 最快 180ms · 不通：抖音」。
+- `POST /api/proxy/test`（body `{proxy}`，留空则用已保存的 `V2I_PROXY`）；GUI 在代理输入框右侧加「测试延迟」，结果按项显示 ✓/✗ 与毫秒。
+- 失败原因做了归类：`ProxyError → 代理连不上（可能要账号密码）`、`InvalidSchema → 协议不支持（socks5 需 PySocks）`、超时、连接被重置、TLS 失败。
+- vendor 里补了 `PySocks`，`socks5://` 现在能测（之前只报 InvalidSchema）。
+- 实测用户给的 `ip5.934618.xyz:44889`：TCP 端口是开的（62.210.124.132，法国 OVH），但 HTTP CONNECT 与 SOCKS5 握手都被对端直接关闭，4 个目标全不通 → 大概率需要 `user:pass@` 或换协议/端口。
+- 另外验证了分离质量（用 whisper 反向检验）：vocals 与原稿相似度 0.95、instrumental 0.97，`corr(orig, vocals)=1.000`、`corr(orig, instr)=0.999` → 这一版 MDX 权重在这段音频上**没有真正分离**（伴奏里人声仍在），需要换 demucs 或补齐 MDX 的 model-data 配置再试；分离耗时 170s / 4分21秒音频。
+
+### 10.70 分离质量复核：MDX 配置并不缺，之前是误判（2026-08-15 追加）
+
+- 复核 `Kim_Vocal_2.onnx`：onnxruntime 能加载，输入 `[batch,4,3072,256]`，是标准 MDX-Net；`download_checks.json` 已通过 jsdelivr 落地，权重通过 ghfast/ghproxy 镜像下载，**没有缺失的 model-data 配置**。
+- 用「人声+BGM」的片段（B站视频 20s）重测：`corr(vocals, instrumental)=0.041`、`corr(vocals+instr, mix)=1.000`、对伴奏轨跑 whisper 相似度 **0.0**（只出乱码），对人声轨 0.96 → 分离是正常工作的。
+- 之前那条抖音音频（纯口播、几乎无 BGM）测出 `corr=0.998`、伴奏相似度 0.97，是**内容特性**：没有独立伴奏可分离，模型给出的残差里仍有人声。不是配置问题。
+- 顺手加质量提示：`separate.stem_similarity()`（用 av 解码，不引新依赖）在两轨相关系数 >0.9 时打印「这条音频可能本来就没有独立伴奏，伴奏里会有人声残留」。
+- 耗时基准：20s 片段 21s（含转码），4 分 21 秒音频 170s，约 1.5× 实时。
+
+### 10.71 分离前先试分，没伴奏直接跳过（2026-08-15 追加）
+
+- `separate._has_companiment()`：从第 20 秒切 45 秒，用同一个模型试分一次，算 `stem_similarity()`；`corr > 0.9` 判定"没有独立伴奏"，直接返回 `{"skipped": True, "corr": ...}` 不跑全片。
+- 切片段失败/试分出错时一律**保守地跑全片**，不会因为探测失败而丢掉分离。
+- `separate()` 现在统一返回 dict（可含 `skipped`/`corr`），`fetch.separate_media()` 过滤出 `vocals/instrumental`，跳过时只打日志"（没有独立伴奏或未安装 audio-separator，跳过分离）"。
+- 实测：
+  - 纯口播 4分21秒：**31.3s 就跳过**（原来 170s），日志「试分结论：两轨相关 1.00，这条音频没有独立伴奏，跳过全片分离」；
+  - 带 BGM 的 60 秒片段：试分 31.9s 得到 corr=0.035 → 继续跑全片，总耗时 78.6s，产出 vocals/instrumental 各 1.44MB。
+
+### 10.72 「分离前不试分」开关（2026-08-15 追加）
+
+- `Config.separate_probe`（默认 True，`V2I_SEPARATE_PROBE=0` 关闭）；`separate(probe=...)` 控制是否先试分；`fetch.separate_media` 透传。
+- GUI 高级选项新增复选框「分离前不试分（直接跑全片，省约 30 秒）」+ 说明行「默认先切 45 秒试分…」；`/api/start` 与上传 query 透传 `separate_probe`；CLI 加 `--no-separate-probe`。
+- 实测：默认 `separate_probe=True`，`V2I_SEPARATE_PROBE=0` 时为 False；复选框默认不勾、无 JS 异常。
+

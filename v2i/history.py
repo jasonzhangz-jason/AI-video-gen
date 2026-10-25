@@ -43,6 +43,12 @@ def _write(items: list[dict]) -> None:
             os.unlink(tmp)
 
 
+def _style_label(style: str | None) -> str:
+    from .rewrite_styles import label
+
+    return label(style or "") if style else ""
+
+
 def _meta(item: dict) -> dict:
     """列表用的轻量结构：不带全文，只给摘要。"""
     output = item.get("output") or ""
@@ -50,6 +56,7 @@ def _meta(item: dict) -> dict:
         "id": item.get("id"),
         "at": item.get("at"),
         "style": item.get("style"),
+        "style_label": _style_label(item.get("style")),
         "model": item.get("model"),
         "tokens": item.get("tokens"),
         "in_chars": item.get("in_chars"),

@@ -93,6 +93,8 @@ class Config:
 
     # 下载
     extract_audio: bool = True        # 拿到视频时顺带抽出 audio.m4a
+    separate: bool = False            # 人声/伴奏分离（重依赖，默认关）
+    separate_probe: bool = True       # 分离前先试分 45 秒，判断有没有伴奏
     douyin_downloader: str = ""       # 抖音兜底下载器：auto / f2 / douyin-downloader / custom
     keep_video: bool = False          # 下载原视频（可在界面里播放），否则只下音频
     cookies: Path | None = None
@@ -191,6 +193,8 @@ class Config:
             keep_video=_env("V2I_KEEP_VIDEO", "").lower() in ("1", "true", "yes", "on"),
             douyin_downloader=_env("V2I_DOUYIN_DOWNLOADER", ""),
             extract_audio=_env("V2I_EXTRACT_AUDIO", "1").lower() not in ("0", "false", "no", "off"),
+            separate=_env("V2I_SEPARATE", "").lower() in ("1", "true", "yes", "on"),
+            separate_probe=_env("V2I_SEPARATE_PROBE", "1").lower() not in ("0", "false", "no", "off"),
             cookies_from_browser=_env("V2I_COOKIES_FROM_BROWSER", None),
             proxy=_env("V2I_PROXY", None),
         )

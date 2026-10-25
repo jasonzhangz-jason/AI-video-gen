@@ -86,6 +86,7 @@
           <label class="opt"><input type="checkbox" id="preferSubs" checked /><span>字幕优先（有字幕就不转写）</span></label>
           <label class="opt"><input type="checkbox" id="keepVideo" checked /><span>保留原视频（界面里可播放）</span></label>
           <label class="opt"><input type="checkbox" id="extractAudio" checked /><span>顺带抽出音频</span></label>
+          <label class="opt"><input type="checkbox" id="separateStems" /><span>分离人声/伴奏</span></label>
           <label class="opt"><input type="checkbox" id="force" /><span>忽略缓存，全部重跑</span></label>
         </div>
 
@@ -131,6 +132,11 @@
                 <option value="firefox">Firefox</option>
               </select>
             </label>
+            <label class="check adv-check">
+              <input type="checkbox" id="noSeparateProbe" />
+              <span>分离前不试分（直接跑全片，省约 30 秒）</span>
+            </label>
+            <p class="hint adv-check-hint">默认先切 45 秒试分：判断这条音频有没有独立伴奏，没有就跳过全片。</p>
             <label>抖音下载器
               <select id="douyinDownloader">
                 <option value="">自动（谁可用用谁）</option>
@@ -156,6 +162,10 @@
       </div>
       <div class="progress"><div class="bar" id="bar"></div></div>
       <div class="job-meta" id="jobMeta"></div>
+      <div class="job-actions" id="jobActions" hidden>
+        <button class="primary" id="retryJob" type="button">重试这次任务</button>
+        <span class="hint" id="retryHint"></span>
+      </div>
       <details class="logs-wrap" open>
         <summary>运行日志</summary>
         <pre class="logs" id="logs"></pre>
@@ -184,6 +194,9 @@
       </div>
       <div class="hist-tools">
         <input id="histSearch" type="search" placeholder="搜索标题 / 作者…" autocomplete="off" />
+        <select id="histPlatform" class="hist-select">
+          <option value="">全部平台</option>
+        </select>
         <label class="check"><input type="checkbox" id="histVideoOnly" /><span>只看有视频的</span></label>
         <label class="hist-size">每页
           <select id="histSize">
@@ -352,8 +365,12 @@
 
       <h3 class="set-group">网络与其他</h3>
       <div class="adv-grid set-grid">
-        <label>代理
-          <input id="setProxy" type="text" placeholder="http://127.0.0.1:7890" autocomplete="off" />
+        <label class="proxy-field">代理
+          <span class="proxy-row">
+            <input id="setProxy" type="text" placeholder="http://127.0.0.1:7890" autocomplete="off" />
+            <button class="ghost" id="proxyTest" type="button">测试延迟</button>
+          </span>
+          <span class="proxy-out" id="proxyOut" hidden></span>
         </label>
         <label>分块字数
           <input id="setChunk" type="number" min="400" max="6000" step="100" />

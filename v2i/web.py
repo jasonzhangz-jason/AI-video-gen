@@ -401,6 +401,13 @@ def _run_job(job: dict) -> None:
             else:
                 workdir = _run_one(job["url"], cfg, cfg.runs_dir, job["modes"], job["force"])
         job["workdir"] = str(workdir)
+        manifest = read_json(Path(workdir) / "manifest.json", {}) or {}
+        manifest["status"] = "done"
+        manifest.pop("error", None)
+        try:
+            write_json(Path(workdir) / "manifest.json", manifest)
+        except OSError:
+            pass
         job["status"] = "done"
         job["progress"] = 100
         job["stage"] = "完成"
@@ -408,6 +415,24 @@ def _run_job(job: dict) -> None:
         job["status"] = "error"
         job["error"] = f"{type(exc).__name__}: {exc}"
         job["logs"].append(traceback.format_exc(limit=4))
+        # 记住重试所需的参数，并把失败状态落到 manifest，历史里能一眼看出来
+        job["retry_payload"] = {
+            "kind": job.get("kind"),
+            "url": job.get("url"),
+            "modes": job.get("modes"),
+            "file_path": job.get("_file_path"),
+            "file_name": job.get("file"),
+        }
+        workdir = job.get("workdir") or ""
+        if workdir:
+            manifest = read_json(Path(workdir) / "manifest.json", {}) or {}
+            manifest["status"] = "failed"
+            manifest["error"] = job["error"][:500]
+            manifest["failed_at"] = now_iso()
+            try:
+                write_json(Path(workdir) / "manifest.json", manifest)
+            except OSError:
+                pass
     finally:
         job["elapsed"] = round(time.time() - started, 1)
         job["finished"] = now_iso()
@@ -497,8 +522,17 @@ def _run_summary(path: Path, cfg: Config) -> dict:
     out = path / "out"
     outputs = [p.name for p in out.glob("*.md")] if out.exists() else []
     has_transcript = (path / "transcript.json").exists()
+    url = meta.get("webpage_url") or manifest.get("url") or ""
+    try:
+        from . import platforms as platforms_mod
+
+        platform = platforms_mod.match(url) if url else None
+    except Exception:  # noqa: BLE001
+        platform = None
     return {
         "dir": path.name,
+        "platform": (platform or {}).get("id", ""),
+        "platform_label": (platform or {}).get("label", "本地文件" if not url else ""),
         "title": meta.get("title") or path.name,
         "uploader": meta.get("uploader") or "",
         "duration": meta.get("duration_text") or "",
@@ -513,6 +547,9 @@ def _run_summary(path: Path, cfg: Config) -> dict:
         "invalid": (manifest.get("distill") or {}).get("invalid_citations") or {},
         "skipped": (manifest.get("distill") or {}).get("skipped") or [],
         "has_video": _has_video(path),
+        "status": manifest.get("status") or ("done" if manifest else "interrupted"),
+        "error": (manifest.get("error") or "")[:200],
+        "can_retry": bool(url or meta.get("local_file")),
     }
 
 
@@ -669,6 +706,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(self._settings_view())
             if route == "/api/cookies/list":
                 return self._json(_list_saved_cookies())
+            if route == "/api/rewrite/styles":
+                from . import rewrite_styles
+
+                return self._json({"styles": rewrite_styles.options()})
             if route == "/api/douyin_tools":
                 from . import douyin as douyin_mod
 
@@ -817,8 +858,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self._save_settings(body)
             if parsed.path == "/api/settings/test":
                 return self._json(self._test_llm())
+            if parsed.path == "/api/proxy/test":
+                try:
+                    from . import net as net_mod
+
+                    proxy = str(body.get("proxy") or "").strip()
+                    if not proxy:
+                        from .settings import load as _load_settings
+
+                        proxy = (os.environ.get("V2I_PROXY") or
+                                 (_load_settings() or {}).get("V2I_PROXY") or "")
+                    result = net_mod.test_proxy(proxy)
+                    result["summary"] = net_mod.summarize(result)
+                    return self._json(result)
+                except Exception as exc:  # noqa: BLE001
+                    return self._error(500, f"{type(exc).__name__}: {exc}")
             if parsed.path == "/api/retry":
-                return self._json(self._start(body, retry=True))
+                return self._json(self._retry(body))
             return self._error(404, "not found")
         except Exception as exc:  # noqa: BLE001
             return self._error(500, f"{type(exc).__name__}: {exc}")
@@ -882,6 +938,8 @@ class Handler(BaseHTTPRequestHandler):
             copy_style=body.get("copy_style") or None,
             keep_video=bool(body.get("keep_video")) or None,
             extract_audio=bool(body.get("extract_audio", True)),
+            separate=bool(body.get("separate")),
+            separate_probe=bool(body.get("separate_probe", True)),
             douyin_downloader=str(body.get("douyin_downloader") or "") or None,
             cookies_from_browser=body.get("cookies_from_browser") or None,
             proxy=body.get("proxy") or None,
@@ -988,6 +1046,37 @@ class Handler(BaseHTTPRequestHandler):
                 _jobs.pop(oldest, None)
         _queue.put(job_id)
         return {"job_id": job_id, "status": "queued"}
+
+    def _retry(self, body: dict) -> dict:
+        """重试：有 dir 就按历史任务重跑；否则按原来的 body 重跑。"""
+        dir_name = str(body.get("dir") or "").strip()
+        if not dir_name:
+            return self._start(body)
+
+        run_dir = _safe_run_dir(dir_name, self._cfg_from(body))
+        if run_dir is None:
+            return {"error": "找不到这条任务"}
+        meta = read_json(run_dir / "meta.json", {}) or {}
+        manifest = read_json(run_dir / "manifest.json", {}) or {}
+
+        local_file = meta.get("local_file") or ""
+        if local_file and Path(local_file).exists():
+            return self._new_job({"modes": manifest.get("modes") or ["all"], "force": True},
+                                 "local", file_path=Path(local_file),
+                                 file_name=Path(local_file).name)
+
+        url = meta.get("webpage_url") or manifest.get("url") or ""
+        if not url:
+            return {"error": "这条任务没有来源链接，没法重试（本地文件可能已经移走）"}
+        payload = {
+            "url": url,
+            "modes": manifest.get("modes") or ["all"],
+            "force": True,
+            "keep_video": True,
+            "extract_audio": True,
+            "separate": bool((manifest.get("fetch") or {}).get("stems")),
+        }
+        return self._new_job(payload, "url", url=url)
 
     def _start(self, body: dict, retry: bool = False) -> dict:
         url = extract_url(str(body.get("url") or ""))
@@ -1166,8 +1255,11 @@ class Handler(BaseHTTPRequestHandler):
             return {"error": "文本太短了，至少 10 个字"}
         if len(text) > 200_000:
             return {"error": "文本太长（上限 20 万字），请分段处理"}
-        style = body.get("style") if body.get("style") in ("light", "script") else "light"
-        prompt_name = "rewrite_script" if style == "script" else "rewrite_light"
+        from . import rewrite_styles
+
+        requested = str(body.get("style") or "").strip()
+        style = requested if rewrite_styles.prompt_for(requested) else "light"
+        prompt_name = rewrite_styles.prompt_for(style) or "rewrite_light"
         try:
             cfg = Config.from_env(model=body.get("model") or None)
             llm = LLM(cfg)
@@ -1250,6 +1342,7 @@ class Handler(BaseHTTPRequestHandler):
             "proxy": (query.get("proxy") or [""])[0],
             "keep_video": (query.get("keep_video") or ["0"])[0] in ("1", "true", "yes"),
             "extract_audio": (query.get("extract_audio") or ["1"])[0] in ("1", "true", "yes"),
+            "separate": (query.get("separate") or ["0"])[0] in ("1", "true", "yes"),
             "douyin_downloader": (query.get("douyin_downloader") or [""])[0],
         }
         result = self._new_job(body, "local", file_path=target, file_name=name)

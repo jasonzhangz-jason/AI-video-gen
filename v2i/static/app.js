@@ -12,6 +12,8 @@
     "out/copy.md": "文案",
     "out/copy.txt": "文案（纯文本）",
     "audio.m4a": "音频",
+    "vocals.mp3": "人声（分离）",
+    "instrumental.mp3": "伴奏（分离）",
     "transcript.md": "逐字稿",
     "transcript.srt": "字幕",
     "out/digest.json": "结构化数据",
@@ -259,6 +261,7 @@
       $("#resultCard").hidden = false;
       $("#resultTitle").textContent = s.title || dir;
       const bits = [];
+      if (s.platform_label) bits.push(s.platform_label);
       if (s.uploader) bits.push(s.uploader);
       if (s.duration) bits.push(s.duration);
       if (s.source) bits.push(s.source === "subtitle" ? "字幕直取" : "本地转写");
@@ -315,6 +318,8 @@
     [/^out\/copy\.txt$/, "文案纯文本：没有 Markdown 标记，方便直接粘贴到发布后台"],
     [/^out\/digest\.json$/, "结构化数据：要点、引用、统计，给二次开发或自动化用"],
     [/^audio\.(m4a|mp3|wav|aac|ogg)$/, "音频：从视频里抽出的音轨，可直接播放或拿去配音/搬运"],
+    [/^vocals\.mp3$/, "人声轨：分离出的说话/演唱部分，适合做字幕对齐或重新混音"],
+    [/^instrumental\.mp3$/, "伴奏轨：去掉人声后的背景音乐/环境声"],
     [/^transcript\.md$/, "逐字稿：带时间码的全文，最原始的文本资产"],
     [/^transcript\.srt$/, "字幕文件：标准 SRT，可导入剪映 / Premiere / YouTube"],
     [/^transcript\.json$/, "唯一真源：段级文本 + 时间戳，后续所有产物都由它生成"],
@@ -562,16 +567,48 @@
     if (job.status === "error" && job.error) meta.push(`<span style="color:var(--bad)">${escapeHtml(job.error)}</span>`);
     $("#jobMeta").innerHTML = meta.join("");
 
+    const actions = $("#jobActions");
+    if (actions) {
+      actions.hidden = job.status !== "error";
+      if (job.status === "error" && $("#retryHint")) {
+        $("#retryHint").textContent = state.lastPayload ? "会用同样的参数重跑一次" : "";
+      }
+    }
+
     const logs = $("#logs");
     const nearBottom = logs.scrollHeight - logs.scrollTop - logs.clientHeight < 40;
     logs.textContent = (job.logs || []).join("\n");
     if (nearBottom) logs.scrollTop = logs.scrollHeight;
   }
 
+  if ($("#retryJob")) $("#retryJob").addEventListener("click", retryLastJob);
+
+  async function retryLastJob() {
+    const payload = state.lastPayload;
+    if (!payload) {
+      alert("这次任务是本地文件，请重新选择文件后再开始");
+      return;
+    }
+    try {
+      const r = await api("/api/retry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (r.error) throw new Error(r.error);
+      $("#jobActions").hidden = true;
+      setRunning(true);
+      pollJob(r.job_id);
+    } catch (err) {
+      alert("重试失败：" + err.message);
+    }
+  }
+
   async function pollJob(id) {
     try {
       const job = await api(`/api/job?id=${encodeURIComponent(id)}`);
-      if (job.error) throw new Error(job.error);
+      // 失败的 job 本身带 error 字段，别把它当成"请求出错"
+      if (!job.status && job.error) throw new Error(job.error);
       renderJob(job);
       if (job.status === "done" || job.status === "error") {
         setRunning(false);
@@ -635,6 +672,8 @@
       prefer_subs: $("#preferSubs").checked,
       keep_video: $("#keepVideo") ? $("#keepVideo").checked : false,
       extract_audio: $("#extractAudio") ? $("#extractAudio").checked : true,
+      separate: $("#separateStems") ? $("#separateStems").checked : false,
+      separate_probe: !($("#noSeparateProbe") && $("#noSeparateProbe").checked),
       douyin_downloader: $("#douyinDownloader") ? $("#douyinDownloader").value : "",
       force: $("#force").checked,
     };
@@ -661,6 +700,8 @@
         params.set("prefer_subs", options.prefer_subs ? "1" : "0");
         params.set("keep_video", options.keep_video ? "1" : "0");
         params.set("extract_audio", options.extract_audio ? "1" : "0");
+        params.set("separate", options.separate ? "1" : "0");
+        params.set("separate_probe", options.separate_probe ? "1" : "0");
         if (options.douyin_downloader) params.set("douyin_downloader", options.douyin_downloader);
         params.set("force", options.force ? "1" : "0");
 
@@ -678,6 +719,7 @@
         });
       }
       if (res.error) throw new Error(res.error);
+      state.lastPayload = isFile ? null : { url, ...options };
       state.jobId = res.job_id;
       pollJob(res.job_id);
     } catch (err) {
@@ -1027,6 +1069,7 @@
         .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`)
         .join("");
       select.value = "auto";
+      fillHistPlatforms();
       renderPlatformNote();
     } catch (err) {
       console.warn("平台列表加载失败", err);
@@ -1528,6 +1571,21 @@
 
   const STYLE_LABEL = { raw: "原样", light: "轻度整理", script: "口播稿" };
 
+  async function loadRewriteStyles() {
+    const sel = $("#rwStyle");
+    if (!sel) return;
+    try {
+      const data = await api("/api/rewrite/styles");
+      const current = sel.value;
+      sel.innerHTML = (data.styles || []).map(
+        (s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.label)}</option>`
+      ).join("");
+      sel.value = current || "light";
+    } catch (err) {
+      sel.title = "风格列表读取失败：" + err.message;
+    }
+  }
+
   function mountResultCard(host) {
     const card = $("#resultCard");
     if (!card || !host) return;
@@ -1548,6 +1606,20 @@
 
   const PAGE_SIZES = [5, 10, 20, 50];
 
+  function fillHistPlatforms() {
+    const sel = $("#histPlatform");
+    if (!sel) return;
+    const list = (state.platforms || []).filter((p) => p.id && p.id !== "auto");
+    const current = sel.value;
+    const seen = new Set();
+    sel.innerHTML = '<option value="">全部平台</option>' + list.map((p) => {
+      if (seen.has(p.id)) return "";
+      seen.add(p.id);
+      return `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`;
+    }).join("") + '<option value="local">本地文件</option>';
+    sel.value = current;
+  }
+
   async function renderHistoryPage() {
     const box = $("#histList");
     if (!box) return;
@@ -1558,8 +1630,13 @@
     const runs = state.runs || [];
     const q = ($("#histSearch").value || "").trim().toLowerCase();
     const videoOnly = $("#histVideoOnly").checked;
+    const platformFilter = $("#histPlatform") ? $("#histPlatform").value : "";
     const shown = runs.filter((r) => {
       if (videoOnly && !r.has_video) return false;
+      if (platformFilter) {
+        const pid = r.platform || (r.url ? "" : "local");
+        if (pid !== platformFilter) return false;
+      }
       if (!q) return true;
       return `${r.title || ""} ${r.uploader || ""}`.toLowerCase().includes(q);
     });
@@ -1591,8 +1668,12 @@
             <small>${escapeHtml(bits.join(" · "))}${r.created ? " · " + escapeHtml(r.created) : ""}</small>
           </div>
           <div class="hist-badges">
+            ${r.platform_label ? `<span class="badge plat">${escapeHtml(r.platform_label)}</span>` : ""}
             ${r.has_video ? '<span class="badge video">VIDEO</span>' : ""}
+            ${r.status === "failed" ? '<span class="badge bad">失败</span>' : ""}
+            ${r.status === "interrupted" ? '<span class="badge bad">中断</span>' : ""}
             ${(r.skipped || []).length ? '<span class="badge warn">部分跳过</span>' : ""}
+            ${r.can_retry && r.status !== "done" ? `<button class="hist-retry" data-dir="${escapeHtml(r.dir)}" type="button" title="用同样的来源和模式重跑一次">重试</button>` : ""}
             <button class="hist-del" data-dir="${escapeHtml(r.dir)}" type="button" title="删除这条任务">删除</button>
             <span class="hist-go">查看 ›</span>
           </div>
@@ -1600,6 +1681,28 @@
     }).join("");
     box.querySelectorAll(".hist-row").forEach((row) => {
       row.addEventListener("click", () => openHistoryRun(row.dataset.dir));
+    });
+    box.querySelectorAll(".hist-retry").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        btn.disabled = true;
+        btn.textContent = "排队中…";
+        try {
+          const r = await api("/api/retry", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ dir: btn.dataset.dir }),
+          });
+          if (r.error) throw new Error(r.error);
+          setRunning(true);
+          switchPage("new");
+          pollJob(r.job_id);
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = "重试";
+          alert("重试失败：" + err.message);
+        }
+      });
     });
     box.querySelectorAll(".hist-del").forEach((btn) => {
       btn.addEventListener("click", (e) => {
@@ -1682,7 +1785,7 @@
       }
       box.innerHTML = items.map((it) => `
         <li class="file-row rw-hist" data-id="${escapeHtml(it.id)}">
-          <span class="fname">${escapeHtml(it.at || "")} · ${escapeHtml(STYLE_LABEL[it.style] || it.style || "")} · ${it.in_chars}→${it.out_chars} 字</span>
+          <span class="fname">${escapeHtml(it.at || "")} · ${escapeHtml(it.style_label || STYLE_LABEL[it.style] || it.style || "")} · ${it.in_chars}→${it.out_chars} 字</span>
           <span class="fmeta rw-preview">${escapeHtml(it.preview || "")}</span>
           <span class="factions">
             <button class="ghost" data-act="view" type="button">查看</button>
@@ -1870,7 +1973,35 @@
   });
   $("#fileInput").addEventListener("change", (e) => selectFile(e.target.files[0]));
   document.querySelectorAll(".nav-item").forEach((b) => b.addEventListener("click", () => switchPage(b.dataset.page)));
+  async function testProxy() {
+    const out = $("#proxyOut");
+    const btn = $("#proxyTest");
+    const proxy = ($("#setProxy").value || "").trim();
+    out.hidden = false;
+    out.className = "proxy-out";
+    out.textContent = "测试中…（最多 8 秒/项）";
+    btn.disabled = true;
+    try {
+      const r = await api("/api/proxy/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ proxy }),
+      });
+      const rows = (r.results || []).map((x) =>
+        `<span class="pt-item ${x.ok ? "ok" : "bad"}">${x.ok ? "✓" : "✗"} ${escapeHtml(x.label)} ${x.ms}ms${x.ok ? "" : "（" + escapeHtml(x.detail) + "）"}</span>`
+      ).join("");
+      out.className = "proxy-out " + (r.ok ? "" : "bad");
+      out.innerHTML = `<strong>${escapeHtml(r.summary || "")}</strong><span class="pt-list">${rows}</span>`;
+    } catch (err) {
+      out.className = "proxy-out bad";
+      out.textContent = "测试失败：" + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   $("#setSave").addEventListener("click", saveSettings);
+  if ($("#proxyTest")) $("#proxyTest").addEventListener("click", testProxy);
   $("#setTest").addEventListener("click", testConnection);
   $("#setClear").addEventListener("click", clearKey);
   $("#rwInput").addEventListener("input", updateCharCount);
@@ -1882,6 +2013,8 @@
     try { await navigator.clipboard.writeText(state.lastRewrite || ""); $("#rwHint").textContent = "已复制"; }
     catch (e) { $("#rwHint").textContent = "复制失败"; }
   });
+  const hp = $("#histPlatform");
+  if (hp) hp.addEventListener("change", () => { state.histPage = 1; renderHistoryPage(); });
   ["histSearch", "histVideoOnly"].forEach((id) => {
     const el = $("#" + id);
     if (el) el.addEventListener("input", () => { state.histPage = 1; renderHistoryPage(); });
@@ -1896,6 +2029,7 @@
   $("#howtoBtn").addEventListener("click", (e) => { e.stopPropagation(); toggleHowto(); });
   $("#usageRefresh").addEventListener("click", loadUsage);
   loadDouyinTools();
+  loadRewriteStyles();
   const goCookie = $("#gotoCookieSettings");
   if (goCookie) {
     goCookie.addEventListener("click", (e) => {

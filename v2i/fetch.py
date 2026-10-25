@@ -461,6 +461,22 @@ def extract_audio(media: Path, workdir: Path, cfg: Config) -> Path | None:
     return target
 
 
+def separate_media(audio: Path, workdir: Path, cfg: Config | None = None) -> dict[str, Path] | None:
+    """返回 {vocals, instrumental}；没有独立伴奏返回 None。"""
+    from . import separate as separate_mod
+
+    if not separate_mod.available():
+        return None
+    proxy = getattr(cfg, "proxy", "") or "" if cfg else ""
+    ffmpeg = (cfg.ffmpeg_exe if cfg else "") or ""
+    result = separate_mod.separate(Path(audio), workdir, proxy=proxy, ffmpeg=ffmpeg,
+                                   probe=bool(getattr(cfg, "separate_probe", True)))
+    if result.get("skipped"):
+        return None
+    stems = {k: v for k, v in result.items() if k in ("vocals", "instrumental") and hasattr(v, "name")}
+    return stems or None
+
+
 def fetch(url: str, cfg: Config, workdir: Path, force: bool = False, info: dict | None = None) -> dict:
     """返回 {meta, source, segments}；字幕路径会直接产出 transcript.json。"""
     workdir.mkdir(parents=True, exist_ok=True)
@@ -515,6 +531,14 @@ def fetch(url: str, cfg: Config, workdir: Path, force: bool = False, info: dict 
             "via": "external-downloader",
         }
         audio = extract_audio(media, workdir, cfg)
+        if getattr(cfg, "separate", False) and audio:
+            _log("  分离人声/伴奏…（首次会下载模型，可能要几分钟）")
+            stems = separate_media(audio, workdir, cfg)
+            if stems:
+                source["stems"] = {k: str(v) for k, v in stems.items()}
+                _log("  已分离：" + "、".join(f"{p.name}" for p in stems.values()))
+            else:
+                _log("  （没有独立伴奏或未安装 audio-separator，跳过分离）")
         if audio and audio != media:
             source["audio_file"] = str(audio)
             _log(f"  音频已提取：{audio.name}（{audio.stat().st_size / 1e6:.1f} MB）")
@@ -577,6 +601,14 @@ def fetch(url: str, cfg: Config, workdir: Path, force: bool = False, info: dict 
         if audio_file and audio_file != media:
             source["audio_file"] = str(audio_file)
             _log(f"  音频已提取：{audio_file.name}（{audio_file.stat().st_size / 1e6:.1f} MB）")
+        if getattr(cfg, "separate", False) and audio_file:
+            _log("  分离人声/伴奏…（首次会下载模型，可能要几分钟）")
+            stems = separate_media(audio_file, workdir, cfg)
+            if stems:
+                source["stems"] = {k: str(v) for k, v in stems.items()}
+                _log("  已分离：" + "、".join(f"{p.name}" for p in stems.values()))
+            else:
+                _log("  ! 分离失败或未安装 audio-separator，跳过")
     write_json(workdir / "source.json", source)
     return {"meta": meta, "source": source, "segments": [], "cached": False}
 
