@@ -780,3 +780,22 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 - 前端 `probeUrl()` 支持 `note` 字段（不再拼 `undefined · undefined`）。
 - 实测：抖音分享文案 → 0.6s 绿字 + 解析链接；快手链接 → 0.0s 红字 + 精确缺失域名 + 按钮；控制台零异常。
 
+### 10.62 抽出独立音轨 audio.m4a（2026-08-14 追加）
+
+- 新增 `fetch.extract_audio(media, workdir, cfg)`：用 `imageio-ffmpeg` 的内置 ffmpeg 执行 `-vn -c:a aac -b:a 128k`，产出 `audio.m4a`；本身就是音频的直接返回原文件；没有 ffmpeg 返回 None 不影响主流程。
+- 触发点三处：yt-dlp 下载到视频、外部下载器（浏览器自动化/f2）拿到视频、本地拖入的视频文件（`web._run_local`，转写改读抽出来的音轨）。
+- `source.json` 增加 `audio_file` 字段；文件列表自动识别为 `AUDIO`，中文含义「从视频里抽出的音轨，可直接播放或拿去配音/搬运」；`FILE_LABELS` 增加 `audio.m4a → 音频`。
+- 实测：39.5MB 抖音视频 → `audio.m4a` 4.02MB，magic `ftypM4A`，耗时 1–2 秒；`/api/files` kind=audio，GUI 显示 `AUDIO audio.m4a 4.0 MB`。
+
+### 10.63 音频抽取做成可选开关（2026-08-14 追加）
+
+- `Config.extract_audio`（默认 True，`V2I_EXTRACT_AUDIO=0` 关闭）；`fetch.extract_audio()` 第一道判断就读它。
+- GUI 模式行新增「顺带抽出音频」pill（默认勾选）；CLI 加 `--no-extract-audio`；`/api/start` 与上传 query 都透传 `extract_audio`。
+- 实测：同一 39.5MB 视频，开关关闭时 `extract_audio()` 返回 None（不产出文件），开启时产出 4.02MB `audio.m4a`；模式行 8 个 pill 仍单行（35px）。
+
+### 10.64 所有文件媒体优先排序（2026-08-14 追加）
+
+- `_list_files()` 末尾按 kind 排序：`video → audio → image → text → binary → dir`，同 kind 内按路径字母序，目录（notes/）始终垫底。
+- 实测：抖音任务的「所有文件」首行是 `VIDEO downloaded/douyin-video.mp4`，第二行 `AUDIO audio.m4a`，之后才是 chunks.json / manifest.json 这些文本。
+- 排序在后端做，`/api/files` 和 GUI 一致，不需要前端二次处理。
+

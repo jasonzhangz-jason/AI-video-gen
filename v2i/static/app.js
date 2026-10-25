@@ -11,6 +11,7 @@
     "out/article.md": "长文",
     "out/copy.md": "文案",
     "out/copy.txt": "文案（纯文本）",
+    "audio.m4a": "音频",
     "transcript.md": "逐字稿",
     "transcript.srt": "字幕",
     "out/digest.json": "结构化数据",
@@ -313,6 +314,7 @@
     [/^out\/copy\.md$/, "文案：去掉口水词、重新分段的成稿（带润色风格标注）"],
     [/^out\/copy\.txt$/, "文案纯文本：没有 Markdown 标记，方便直接粘贴到发布后台"],
     [/^out\/digest\.json$/, "结构化数据：要点、引用、统计，给二次开发或自动化用"],
+    [/^audio\.(m4a|mp3|wav|aac|ogg)$/, "音频：从视频里抽出的音轨，可直接播放或拿去配音/搬运"],
     [/^transcript\.md$/, "逐字稿：带时间码的全文，最原始的文本资产"],
     [/^transcript\.srt$/, "字幕文件：标准 SRT，可导入剪映 / Premiere / YouTube"],
     [/^transcript\.json$/, "唯一真源：段级文本 + 时间戳，后续所有产物都由它生成"],
@@ -632,6 +634,7 @@
       proxy: $("#proxy") && $("#proxy").value.trim() ? $("#proxy").value.trim() : undefined,
       prefer_subs: $("#preferSubs").checked,
       keep_video: $("#keepVideo") ? $("#keepVideo").checked : false,
+      extract_audio: $("#extractAudio") ? $("#extractAudio").checked : true,
       douyin_downloader: $("#douyinDownloader") ? $("#douyinDownloader").value : "",
       force: $("#force").checked,
     };
@@ -657,6 +660,7 @@
         if (options.proxy) params.set("proxy", options.proxy);
         params.set("prefer_subs", options.prefer_subs ? "1" : "0");
         params.set("keep_video", options.keep_video ? "1" : "0");
+        params.set("extract_audio", options.extract_audio ? "1" : "0");
         if (options.douyin_downloader) params.set("douyin_downloader", options.douyin_downloader);
         params.set("force", options.force ? "1" : "0");
 

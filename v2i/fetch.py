@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import re
+import subprocess
 import time
 from pathlib import Path
 
@@ -430,6 +431,36 @@ def resolve_douyin(url: str, cfg: Config) -> str:
     return url
 
 
+AUDIO_SUFFIXES = {".m4a", ".mp3", ".wav", ".flac", ".aac", ".ogg", ".opus", ".wma"}
+
+
+def extract_audio(media: Path, workdir: Path, cfg: Config) -> Path | None:
+    """从视频里抽出独立音轨（audio.m4a），方便单独取用/播放。
+
+    已经是音频就原样返回；没有 ffmpeg 就返回 None，不影响主流程。
+    """
+    media = Path(media)
+    if media.suffix.lower() in AUDIO_SUFFIXES:
+        return media
+    if not getattr(cfg, "extract_audio", True):
+        return None
+    ffmpeg = getattr(cfg, "ffmpeg_exe", None)
+    if not ffmpeg:
+        return None
+    target = workdir / "audio.m4a"
+    if target.exists() and target.stat().st_size > 1000:
+        return target
+    cmd = [ffmpeg, "-y", "-loglevel", "error", "-i", str(media),
+           "-vn", "-c:a", "aac", "-b:a", "128k", str(target)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0 or not target.exists() or target.stat().st_size < 1000:
+        return None
+    return target
+
+
 def fetch(url: str, cfg: Config, workdir: Path, force: bool = False, info: dict | None = None) -> dict:
     """返回 {meta, source, segments}；字幕路径会直接产出 transcript.json。"""
     workdir.mkdir(parents=True, exist_ok=True)
@@ -483,6 +514,11 @@ def fetch(url: str, cfg: Config, workdir: Path, force: bool = False, info: dict 
             "lang": None,
             "via": "external-downloader",
         }
+        audio = extract_audio(media, workdir, cfg)
+        if audio and audio != media:
+            source["audio_file"] = str(audio)
+            _log(f"  音频已提取：{audio.name}（{audio.stat().st_size / 1e6:.1f} MB）")
+            write_json(workdir / "source.json", source)
         write_json(workdir / "source.json", source)
         return {"meta": meta, "source": source, "segments": [], "cached": False}
     meta = _clean_meta(info)
@@ -536,6 +572,11 @@ def fetch(url: str, cfg: Config, workdir: Path, force: bool = False, info: dict 
         "subtitle": None,
         "lang": None,
     }
+    if is_video:
+        audio_file = extract_audio(media, workdir, cfg)
+        if audio_file and audio_file != media:
+            source["audio_file"] = str(audio_file)
+            _log(f"  音频已提取：{audio_file.name}（{audio_file.stat().st_size / 1e6:.1f} MB）")
     write_json(workdir / "source.json", source)
     return {"meta": meta, "source": source, "segments": [], "cached": False}
 

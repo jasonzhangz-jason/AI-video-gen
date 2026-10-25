@@ -322,7 +322,17 @@ def _run_local(path: Path, cfg: Config, modes: tuple[str, ...], force: bool) -> 
     }
     write_json(workdir / "meta.json", meta)
 
-    transcript = asr.transcribe(path, cfg, workdir, force=force)
+    # 视频素材顺带抽一条独立音轨，方便单独取用
+    from . import fetch as fetch_mod
+
+    audio_file = fetch_mod.extract_audio(path, workdir, cfg)
+    if audio_file and Path(audio_file) != path:
+        print(f"  音频已提取：{Path(audio_file).name}（{Path(audio_file).stat().st_size / 1e6:.1f} MB）", flush=True)
+        source_path = Path(audio_file)
+    else:
+        source_path = path
+
+    transcript = asr.transcribe(source_path, cfg, workdir, force=force)
     chunks = normalize.normalize(transcript, workdir, cfg.chunk_chars, cfg.overlap_sentences)
 
     manifest = read_json(workdir / "manifest.json", {}) or {}
@@ -459,6 +469,10 @@ def _list_files(run_dir: Path) -> list[dict]:
     notes = len(list((root / "notes").glob("chunk-*.json"))) if (root / "notes").is_dir() else 0
     if notes:
         items.append({"path": "notes/", "size": notes, "kind": "dir", "mtime": "", "note": f"{notes} 块笔记"})
+
+    # 媒体优先：视频 → 音频 → 图片 → 文本 → 其它 → 目录
+    order = {"video": 0, "audio": 1, "image": 2, "text": 3, "binary": 4, "dir": 5}
+    items.sort(key=lambda f: (order.get(f["kind"], 9), f["path"]))
     return items
 
 
@@ -867,6 +881,7 @@ class Handler(BaseHTTPRequestHandler):
             prefer_subs=bool(prefer) if prefer is not None else None,
             copy_style=body.get("copy_style") or None,
             keep_video=bool(body.get("keep_video")) or None,
+            extract_audio=bool(body.get("extract_audio", True)),
             douyin_downloader=str(body.get("douyin_downloader") or "") or None,
             cookies_from_browser=body.get("cookies_from_browser") or None,
             proxy=body.get("proxy") or None,
@@ -1234,6 +1249,7 @@ class Handler(BaseHTTPRequestHandler):
             "cookies_from_browser": (query.get("cookies_from_browser") or [""])[0],
             "proxy": (query.get("proxy") or [""])[0],
             "keep_video": (query.get("keep_video") or ["0"])[0] in ("1", "true", "yes"),
+            "extract_audio": (query.get("extract_audio") or ["1"])[0] in ("1", "true", "yes"),
             "douyin_downloader": (query.get("douyin_downloader") or [""])[0],
         }
         result = self._new_job(body, "local", file_path=target, file_name=name)

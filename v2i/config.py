@@ -92,6 +92,7 @@ class Config:
     word_timestamps: bool = False
 
     # 下载
+    extract_audio: bool = True        # 拿到视频时顺带抽出 audio.m4a
     douyin_downloader: str = ""       # 抖音兜底下载器：auto / f2 / douyin-downloader / custom
     keep_video: bool = False          # 下载原视频（可在界面里播放），否则只下音频
     cookies: Path | None = None
@@ -189,6 +190,7 @@ class Config:
             cookies=Path(_env("V2I_COOKIES")) if _env("V2I_COOKIES") else default_cookies(),
             keep_video=_env("V2I_KEEP_VIDEO", "").lower() in ("1", "true", "yes", "on"),
             douyin_downloader=_env("V2I_DOUYIN_DOWNLOADER", ""),
+            extract_audio=_env("V2I_EXTRACT_AUDIO", "1").lower() not in ("0", "false", "no", "off"),
             cookies_from_browser=_env("V2I_COOKIES_FROM_BROWSER", None),
             proxy=_env("V2I_PROXY", None),
         )

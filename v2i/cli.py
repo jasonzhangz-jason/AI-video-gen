@@ -49,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--copy-style", choices=["raw", "light", "script"], help="文案风格：raw 原样 / light 轻度整理 / script 口播稿")
     run.add_argument("--cookies-from-browser", help="复用浏览器 cookies：chrome / edge / firefox")
     run.add_argument("--keep-video", action="store_true", help="下载原视频（界面里可播放），否则只下音频")
+    run.add_argument("--no-extract-audio", action="store_true", help="不要顺带抽出 audio.m4a")
     run.add_argument("--douyin-downloader", choices=["auto", "f2", "douyin-downloader", "custom"],
                      help="抖音兜底下载器（默认 auto）")
     run.add_argument("--platform", help="指定平台 id（如 douyin / youtube / x）")
@@ -111,6 +112,8 @@ def _config(args) -> Config:
         overrides["prefer_subs"] = False
     if getattr(args, "keep_video", False):
         overrides["keep_video"] = True
+    if getattr(args, "no_extract_audio", False):
+        overrides["extract_audio"] = False
     if getattr(args, "douyin_downloader", None):
         overrides["douyin_downloader"] = args.douyin_downloader
     return Config.from_env(**overrides)
