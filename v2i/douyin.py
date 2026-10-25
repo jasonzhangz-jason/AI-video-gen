@@ -52,8 +52,17 @@ INSTALL_HINT = (
 _ENV_PATHS = {"f2": "V2I_F2_PATH", "douyin-downloader": "V2I_DOUYIN_DOWNLOADER_PATH"}
 
 CHROME_CANDIDATES = (
+    # Windows
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    # Linux（无头服务器一般装 chromium）
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/snap/bin/chromium",
+    # macOS
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 )
 
 

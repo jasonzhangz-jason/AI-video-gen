@@ -21,7 +21,7 @@ if not defined PYEXE (
 
 if not exist "vendor\faster_whisper" (
   echo [v2i] 首次运行，正在安装依赖（约 250MB，走阿里云源）...
-  %PYEXE% -m pip install --target "vendor" --upgrade yt-dlp faster-whisper "av==16.1.0" requests imageio-ffmpeg -i https://mirrors.aliyun.com/pypi/simple
+  %PYEXE% -m pip install --target "vendor" --upgrade -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple
   if errorlevel 1 (
     echo [v2i] 依赖安装失败：检查网络后重试，或按 README 手动安装。
     pause
@@ -34,4 +34,3 @@ if not exist ".env" copy /y ".env.example" ".env" >nul
 echo [v2i] 启动 Web GUI ... 关闭本窗口即停止服务
 %PYEXE% -m v2i web
 pause
-

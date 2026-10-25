@@ -1,0 +1,31 @@
+# v2i systemd 服务模板
+#
+# 手动安装：
+#   sudo cp deploy/v2i.service.example /etc/systemd/system/v2i.service
+#   sudo sed -i "s#__ROOT__#$(pwd)#g" /etc/systemd/system/v2i.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now v2i
+#
+# 或者直接：sudo ./deploy.sh --service（会自动生成并启用）
+
+[Unit]
+Description=v2i 视频转文字服务
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__ROOT__
+ExecStart=__ROOT__/v2i.sh web --host 0.0.0.0 --port 8765
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+# 需要代理时取消注释（yt-dlp 抓抖音 / 下载模型会用到）
+# Environment=HTTPS_PROXY=http://127.0.0.1:7890
+# Environment=HTTP_PROXY=http://127.0.0.1:7890
+
+# 防火墙只对本机反代开放时，可以绑回 127.0.0.1：
+# ExecStart=__ROOT__/v2i.sh web --host 127.0.0.1 --port 8765
+
+[Install]
+WantedBy=multi-user.target

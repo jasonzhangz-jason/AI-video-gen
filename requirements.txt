@@ -1,0 +1,22 @@
+# v2i 运行时依赖（Linux / macOS / Windows 通用）
+# 安装方式：python -m pip install --target vendor -r requirements.txt
+# 说明：只装应用真正 import 的包；yt-dlp 用 pip 版即可（仓库里没有内置源码）
+
+yt-dlp>=2026.10.21
+
+# 语音转写
+faster-whisper>=1.2.1
+av==16.1.0          # 必须锁 16.x：av 19 移除了 faster-whisper 用到的 metadata_errors
+ctranslate2>=4.5
+
+# 网络请求 / cookies / 配置
+requests>=2.32
+PySocks>=1.7.1      # socks5 代理支持（requests 需要它）
+pyyaml>=6.0.1       # 读写 .runtime/settings.json 之外，也给音频分离的配置用
+
+# 中文处理与音频
+opencc-python-reimplemented>=0.1.7
+imageio-ffmpeg>=0.5  # 自带静态 ffmpeg（抽音轨、切片、音频分离都要用）
+
+# 可选：人声/伴奏分离（体积大，约 1GB；不需要可以不装）
+# audio-separator[cpu]>=0.14

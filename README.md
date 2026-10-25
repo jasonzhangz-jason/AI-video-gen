@@ -321,6 +321,54 @@ runs/<标题>-<id>/
 > `medium` 约慢 2.5–3 倍，`large-v3` 在纯 CPU 上不建议。
 
 - **代理测延迟**：系统配置 → 网络与其他 → 代理右侧「测试延迟」，对国际线路 / DeepSeek API / GitHub 原始文件 / 抖音 各打一次轻量请求，显示毫秒数与失败原因（超时 / 连接被重置 / 代理连不上）。
+## 部署到 Linux 服务器
+
+```bash
+# 1. 把项目传上去（git clone 或 scp）
+# 2. 一键部署（自动装依赖到 vendor/、生成 .env、后台起服务、健康检查）
+chmod +x deploy.sh v2i.sh
+./deploy.sh
+```
+
+脚本会做这些事：
+
+| 步骤 | 说明 |
+|---|---|
+| 检查 Python | 需要 3.10+；没装会提示对应发行版的安装命令 |
+| 装依赖 | `pip install --target vendor -r requirements.txt`，不污染系统 Python |
+| 生成配置 | `.env` 不存在时从 `.env.example` 复制（记得填 `DEEPSEEK_API_KEY`） |
+| 起服务 | `nohup ./v2i.sh web --host 0.0.0.0 --port 8765`，写 pid 到 `.runtime/web.pid` |
+| 健康检查 | 轮询 `/api/status`，最多 30 秒；失败时提示看日志 |
+| 端口提示 | 给出 `ufw` / `firewall-cmd` 放行命令 |
+
+常用参数：
+
+```bash
+./deploy.sh --port 9000          # 换端口
+./deploy.sh --service            # 装成 systemd 服务（开机自启、崩溃重启，需 root）
+./deploy.sh --skip-deps          # 依赖已装好，只重启
+./deploy.sh --force-deps         # 强制更新依赖
+./deploy.sh --no-start           # 只准备环境
+./deploy.sh --stop               # 停止后台服务
+./deploy.sh --dry-run            # 只打印命令，不执行
+```
+
+手动 systemd（不想用脚本时）：
+
+```bash
+sudo cp deploy/v2i.service.example /etc/systemd/system/v2i.service
+sudo sed -i "s#__ROOT__#$(pwd)#g" /etc/systemd/system/v2i.service
+sudo systemctl daemon-reload && sudo systemctl enable --now v2i
+journalctl -u v2i -f
+```
+
+注意事项：
+
+- **必须先填 `DEEPSEEK_API_KEY`**（`.env` 或页面「系统配置」），否则提炼环节会报错；
+- 首次跑任务会下载 whisper 模型（small 约 480MB），可以用 `HF_ENDPOINT=https://hf-mirror.com` 加速；
+- 想让人声/伴奏分离可用，再额外装：`pip install --target vendor "audio-separator[cpu]"`（约 1GB，见上面「分离」一节）；
+- 对外暴露前建议加反向代理 + Basic Auth，这个 GUI 没有内置鉴权。
+
 ## 常见问题
 
 | 现象 | 处理 |

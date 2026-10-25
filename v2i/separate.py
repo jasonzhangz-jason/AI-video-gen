@@ -61,7 +61,7 @@ def _env(proxy: str = "", ffmpeg: str = "") -> dict:
     if ffmpeg and Path(ffmpeg).exists():
         shim_dir = PROJECT_ROOT / ".tools" / "bin"
         shim_dir.mkdir(parents=True, exist_ok=True)
-        shim = shim_dir / "ffmpeg.exe"
+        shim = shim_dir / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
         if not shim.exists():
             try:
                 shutil.copyfile(ffmpeg, shim)

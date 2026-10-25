@@ -869,3 +869,14 @@ yt-dlp -f bestaudio -o "demo.%(ext)s" "<URL>"
 - JS `autoGrowUrl()`：输入时按 `scrollHeight` 长高，3 行起步、最多 9 行（超过就内部滚动）。
 - 实测：106 字分享文案 87px 高无溢出；297 字（重复 3 遍 + 话题）自动换成 3 行、仍完整可见、提示行显示识别出的短链。
 
+### 10.74 一键部署脚本（Linux/macOS）（2026-08-15 追加）
+
+- 新增 `requirements.txt`：yt-dlp / faster-whisper / `av==16.1.0`（av19 移除了 metadata_errors）/ requests / PySocks / pyyaml / opencc / imageio-ffmpeg，audio-separator 作为可选注释。
+- 新增 `v2i.sh`：设 `PYTHONPATH=vendor:ROOT` + `PYTHONUTF8`，无参数 = 起 Web，带参数 = CLI；找不到 python3 时给出安装提示。
+- 新增 `deploy.sh`：检查 Python≥3.10 → `pip install --target vendor -r requirements.txt`（已装则跳过，`--force-deps` 强制）→ 生成 `.env` → 建 `.runtime/runs/.cookies` → `PYTHONUNBUFFERED=1 nohup ./v2i.sh web --host 0.0.0.0 --port 8765` 写 pid → 轮询 `/api/status` 健康检查（30s）→ 打印 ufw/firewall-cmd 放行命令。
+  - 参数：`--port/--host/--python/--mirror/--skip-deps/--force-deps/--service/--no-start/--stop/--dry-run`。
+  - `--service` 生成 systemd unit 到 `/etc/systemd/system/v2i.service`（Restart=always、可选代理环境变量）并 enable --now；另附 `deploy/v2i.service.example` 手动安装模板。
+- 跨平台补齐：`douyin.CHROME_CANDIDATES` 增加 Linux（chromium/chrome）与 macOS 路径；`separate.py` 的 ffmpeg shim 按平台命名（`ffmpeg` / `ffmpeg.exe`）。
+- `start.cmd` 改为直接读 `requirements.txt`，与 Linux 依赖保持一致；`.env.example` 补 V2I_KEEP_VIDEO / EXTRACT_AUDIO / DOUYIN_DOWNLOADER / SEPARATE / SEPARATE_PROBE 等新键。
+- 实测（Git Bash 模拟）：`bash -n` 语法通过；`--dry-run` 输出正确；真实跑 `deploy.sh --port 8899 --skip-deps` → 健康检查第 1 次通过、`.runtime/web.pid` 写入、`.runtime/web.log` 有启动横幅；`--stop` 正确停掉并打印 pid。
+
